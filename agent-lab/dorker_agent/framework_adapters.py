@@ -1,24 +1,19 @@
-"""Explicit, synchronous adapters for optional agent frameworks.
-
-Framework packages are not imported here. Callers inject already-constructed
-framework objects; Dorker checks capability policy before invoking them.
-"""
+"""Explicit, synchronous adapters for optional agent frameworks."""
 from __future__ import annotations
 
 from typing import Mapping, Protocol
 
 from .capabilities import CapabilityPolicy, DEFAULT_POLICY
+from .execution import InMemoryExecutionLedger
 from .tasks import TaskRequest
 
 
 class CrewPort(Protocol):
-    def kickoff(self, *, inputs: Mapping[str, str]) -> object:
-        """Run a preconfigured CrewAI crew."""
+    def kickoff(self, *, inputs: Mapping[str, str]) -> object: ...
 
 
 class RunnablePort(Protocol):
-    def invoke(self, input: Mapping[str, str]) -> object:
-        """Invoke a preconfigured LangChain runnable."""
+    def invoke(self, input: Mapping[str, str]) -> object: ...
 
 
 class FrameworkExecutionError(RuntimeError):
@@ -28,11 +23,7 @@ class FrameworkExecutionError(RuntimeError):
 def _task_input(task: TaskRequest) -> dict[str, str]:
     if not isinstance(task, TaskRequest):
         raise TypeError("task must be a TaskRequest")
-    return {
-        "title": task.title,
-        "description": task.body,
-        "task_type": task.task_type,
-    }
+    return {"title": task.title, "description": task.body, "task_type": task.task_type}
 
 
 def _response_text(result: object, *, attribute: str | None = None) -> str:
@@ -42,6 +33,27 @@ def _response_text(result: object, *, attribute: str | None = None) -> str:
     if not isinstance(candidate, str) or not candidate.strip():
         raise FrameworkExecutionError("framework returned an empty or unsupported response")
     return candidate.strip()
+
+
+def _invoke_with_ledger(
+    invoke,
+    *,
+    ledger: InMemoryExecutionLedger | None,
+    execution_id: str | None,
+) -> str:
+    if (ledger is None) != (execution_id is None):
+        raise ValueError("ledger and execution_id must be supplied together")
+    if ledger is not None:
+        ledger.begin(execution_id)
+    try:
+        result = invoke()
+        if ledger is not None:
+            ledger.succeed(execution_id, result)
+        return result
+    except Exception as exc:
+        if ledger is not None:
+            ledger.fail(execution_id, exc)
+        raise
 
 
 class CrewAIAdapter:
@@ -54,20 +66,23 @@ class CrewAIAdapter:
         crew: CrewPort,
         *,
         policy: CapabilityPolicy = DEFAULT_POLICY,
+        ledger: InMemoryExecutionLedger | None = None,
     ) -> None:
-        self._crew = crew
-        self._policy = policy
+        self._crew, self._policy, self._ledger = crew, policy, ledger
 
-    def run(self, task: TaskRequest) -> str:
+    def run(self, task: TaskRequest, *, execution_id: str | None = None) -> str:
         payload = _task_input(task)
         self._policy.require(self.CAPABILITY)
-        try:
-            result = self._crew.kickoff(inputs=payload)
-            return _response_text(result, attribute="raw")
-        except FrameworkExecutionError:
-            raise
-        except Exception as exc:
-            raise FrameworkExecutionError("CrewAI execution failed") from exc
+
+        def invoke() -> str:
+            try:
+                return _response_text(self._crew.kickoff(inputs=payload), attribute="raw")
+            except FrameworkExecutionError:
+                raise
+            except Exception as exc:
+                raise FrameworkExecutionError("CrewAI execution failed") from exc
+
+        return _invoke_with_ledger(invoke, ledger=self._ledger, execution_id=execution_id)
 
 
 class LangChainAdapter:
@@ -80,17 +95,20 @@ class LangChainAdapter:
         runnable: RunnablePort,
         *,
         policy: CapabilityPolicy = DEFAULT_POLICY,
+        ledger: InMemoryExecutionLedger | None = None,
     ) -> None:
-        self._runnable = runnable
-        self._policy = policy
+        self._runnable, self._policy, self._ledger = runnable, policy, ledger
 
-    def run(self, task: TaskRequest) -> str:
+    def run(self, task: TaskRequest, *, execution_id: str | None = None) -> str:
         payload = _task_input(task)
         self._policy.require(self.CAPABILITY)
-        try:
-            result = self._runnable.invoke(payload)
-            return _response_text(result, attribute="content")
-        except FrameworkExecutionError:
-            raise
-        except Exception as exc:
-            raise FrameworkExecutionError("LangChain execution failed") from exc
+
+        def invoke() -> str:
+            try:
+                return _response_text(self._runnable.invoke(payload), attribute="content")
+            except FrameworkExecutionError:
+                raise
+            except Exception as exc:
+                raise FrameworkExecutionError("LangChain execution failed") from exc
+
+        return _invoke_with_ledger(invoke, ledger=self._ledger, execution_id=execution_id)
