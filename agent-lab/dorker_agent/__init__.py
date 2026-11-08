@@ -9,6 +9,7 @@ from .framework_adapters import (
 from .tasks import TaskRequest
 from .github_oidc import (
     GitHubActionsJWKSProvider,
+    GitHubActionsOIDCTokenProvider,
     GitHubActionsOIDCVerifier,
     GitHubOIDCPolicy,
     OIDCVerificationError,
@@ -50,6 +51,7 @@ __all__ = [
     "ModelMessage",
     "TaskRequest",
     "GitHubActionsJWKSProvider",
+    "GitHubActionsOIDCTokenProvider",
     "GitHubActionsOIDCVerifier",
     "GitHubOIDCPolicy",
     "OIDCVerificationError",
