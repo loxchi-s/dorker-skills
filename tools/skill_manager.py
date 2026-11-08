@@ -162,7 +162,7 @@ def write_pins(root: Path, data: dict) -> None:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=root, delete=False) as tmp:
             temp_name = tmp.name
             json.dump(data, tmp, indent=2, sort_keys=True)
-            tmp.write("\\n")
+            tmp.write("\n")
             tmp.flush()
             os.fsync(tmp.fileno())
         os.chmod(temp_name, 0o600)
