@@ -21,6 +21,7 @@ _SHA256_DIGEST_INFO_PREFIX = bytes.fromhex("3031300d0609608648016503040201050004
 
 from dorker_agent.github_oidc import (
     GitHubActionsOIDCVerifier,
+    GitHubActionsOIDCIdentityProvider,
     GitHubActionsOIDCTokenProvider,
     GitHubOIDCPolicy,
     OIDCVerificationError,
@@ -165,6 +166,51 @@ class GitHubActionsOIDCTokenProviderTests(unittest.TestCase):
             with self.subTest(body_size=len(body)):
                 with self.assertRaises(OIDCVerificationError):
                     provider.acquire()
+
+
+class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
+    def setUp(self):
+        self.policy = GitHubOIDCPolicy(
+            audience="dorker-artifact-gc",
+            repository="loxchi-s/dorker-skills",
+            repository_id=123456,
+            allowed_workflow_refs=(
+                "loxchi-s/dorker-skills/.github/workflows/agent-lab-ci.yml@refs/heads/main",
+            ),
+            clock_skew_seconds=0,
+            max_token_age_seconds=600,
+        )
+        self.verifier = GitHubActionsOIDCVerifier(
+            self.policy, FakeJWKS(), clock=lambda: 1_800_000_100,
+        )
+
+    def test_acquires_claim_and_verifies_signed_actor(self):
+        token = token_for(claims())
+        class TokenSource:
+            def acquire(self):
+                return token
+        identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
+        claim = identity.acquire_claim()
+        self.assertEqual((claim.github_id, claim.login), (101, "creator"))
+        self.assertEqual(identity.verify(claim), VerifiedGitHubActor(101, "creator"))
+
+    def test_rejects_missing_or_invalid_actor_before_claim_creation(self):
+        for payload in (claims(actor_id=True), claims(actor_id="0"), claims(actor=" ")):
+            class TokenSource:
+                def acquire(self):
+                    return token_for(payload)
+            identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
+            with self.assertRaises(OIDCVerificationError):
+                identity.acquire_claim()
+
+    def test_signed_actor_mismatch_fails_verification(self):
+        class TokenSource:
+            def acquire(self):
+                return token_for(claims(actor_id="202", actor="attacker"))
+        identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
+        claim = identity.acquire_claim()
+        with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
+            identity.verify(claim)
 
 
 class GitHubActionsOIDCVerifierTests(unittest.TestCase):
