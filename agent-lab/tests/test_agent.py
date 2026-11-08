@@ -24,7 +24,7 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(agent.run(" Fix the unit test "), "Inspect the failing test.")
         self.assertEqual(model.messages[0], ModelMessage("system", "Act as a coding assistant."))
-        self.assertEqual(model.messages[1], ModelMessage("user", "Fix the failing test"))
+        self.assertEqual(model.messages[1], ModelMessage("user", "Fix the unit test"))
 
     def test_rejects_empty_task(self):
         agent = Agent(FakeModel(), system_prompt="Assistant")
