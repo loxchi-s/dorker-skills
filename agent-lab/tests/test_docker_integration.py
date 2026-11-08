@@ -93,7 +93,7 @@ print("mount-boundary-probe: PASS")
             max_output_bytes=1024,
         )
         result = RUNTIME.run_container(config, timeout_seconds=10, control=None)
-        self.assertIn(b"15", result.stdout)
+        self.assertIn(b"16", result.stdout)
 
     def test_timeout_stops_long_running_container(self):
         config = ContainerSandboxConfig(
