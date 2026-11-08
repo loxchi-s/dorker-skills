@@ -137,7 +137,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
 
     def test_rejects_oversized_jwks_key_set(self):
         self.verifier._jwks.document = {"keys": [{}] * 33}
-        with self.assertRaisesRegex(OIDCVerificationError, "missing or ambiguous"):
+        with self.assertRaisesRegex(OIDCVerificationError, "key count exceeds bounds"):
             self.verifier.verify(self.claim)
 
     def test_policy_rejects_wildcard_or_empty_workflow_allowlist(self):
