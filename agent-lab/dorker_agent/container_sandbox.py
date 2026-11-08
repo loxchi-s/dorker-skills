@@ -24,7 +24,7 @@ from .execution import (
     SQLiteExecutionStore,
 )
 
-_DIGEST_IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}$")
+_DIGEST_IMAGE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}|sha256:[0-9a-f]{64})$")
 
 
 class ContainerSandboxError(RuntimeError):
@@ -66,7 +66,7 @@ class ContainerSandboxConfig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.image, str) or not _DIGEST_IMAGE.fullmatch(self.image):
-            raise ValueError("image must be pinned to an immutable sha256 digest")
+            raise ValueError("image must be a repository digest or local sha256 image ID")
         if not isinstance(self.command, tuple) or not self.command:
             raise ValueError("command must be a non-empty tuple of arguments")
         if any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in self.command):
