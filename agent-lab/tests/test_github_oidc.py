@@ -99,8 +99,14 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
         )
 
     def test_rejects_bad_signature(self):
+        header, payload, signature = self.claim.oidc_token.split(".")
+        raw_signature = bytearray(base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)))
+        raw_signature[0] ^= 1
+        tampered = GitHubActorClaim(
+            101, "creator", f"{header}.{payload}.{b64url(bytes(raw_signature))}",
+        )
         with self.assertRaisesRegex(OIDCVerificationError, "signature verification failed"):
-            self.verifier.verify(self.claim)
+            self.verifier.verify(tampered)
 
     def test_rejects_wrong_repository_workflow_audience_and_actor(self):
         cases = (
