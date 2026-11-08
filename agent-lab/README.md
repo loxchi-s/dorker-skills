@@ -22,13 +22,15 @@ The base agent accepts a task and an injected model adapter. It exposes no shell
 - `LangChainAdapter` accepts an injected Runnable exposing `invoke(input)`.
 - Both adapters are synchronous, accept only `TaskRequest`, normalize plain-string responses or framework text fields (CrewAI `raw` / LangChain `content`), and wrap framework exceptions.
 - Each adapter requires its own explicit capability: `framework:crewai` or `framework:langchain`. The default policy denies both.
+- Optional `InMemoryExecutionLedger` integration records `running`, `succeeded`, and `failed`; execution IDs are single-use and duplicate claims are rejected. The ledger is thread-safe and capacity-bounded.
 - Framework packages are not imported or installed by Agent Lab. The caller is responsible for constructing and configuring the injected object.
 - Framework-native tools are not granted by these adapters. Do not pass a preconfigured crew/runnable with tools or external side effects unless separately reviewed and explicitly authorized.
 
 ## Execution boundaries
-These adapters do not implement timeout enforcement, asynchronous cancellation, retries, persistence, idempotency, sandboxing, or framework tool isolation. Do not treat capability checks as a security boundary against arbitrary code inside an injected framework object. Keep framework objects trusted and runtime disabled until an isolated execution contract is implemented and tested.
+These adapters do not implement timeout enforcement, asynchronous cancellation, retries, durable persistence, crash recovery, distributed idempotency, sandboxing, or framework tool isolation. The in-memory ledger only prevents duplicate execution IDs within one process lifetime; it is not a durable or distributed exactly-once guarantee. Do not treat capability checks as a security boundary against arbitrary code inside an injected framework object. Keep framework objects trusted and runtime disabled until an isolated execution contract is implemented and tested.
 
 ## Status
 - Implemented: synchronous injected ports, explicit capability gates, task mapping, response validation, exception wrapping, and fake-port unit tests.
-- Not implemented: live framework integrations, dependency installation, tool execution, timeout/cancellation, durable state, or sandbox integration.
+- Implemented: optional process-local execution lifecycle ledger, bounded capacity, thread-safe single-use execution IDs, and adapter lifecycle integration.
+- Not implemented: live framework integrations, dependency installation, tool execution, timeout/cancellation, durable state, crash recovery, distributed idempotency, or sandbox integration.
 - Validation: pending GitHub Actions for this change.
