@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import unittest
@@ -191,6 +192,36 @@ class DockerCLIArgvTests(unittest.TestCase):
             DockerCLIContainerRuntime().build_argv(
                 ContainerSandboxConfig(image=IMAGE, command=("id",)), "relative"
             )
+
+
+class ContainerArtifactIntegrityTests(unittest.TestCase):
+    def test_input_sha256_is_deterministic(self):
+        config = ContainerSandboxConfig(
+            image=IMAGE, command=("cat",), input_payload=b"artifact",
+            max_input_bytes=16,
+        )
+        self.assertEqual(
+            config.input_sha256,
+            hashlib.sha256(b"artifact").hexdigest(),
+        )
+
+    def test_stdout_sha256_and_verification(self):
+        result = ContainerResult(0, b"artifact", b"diagnostic")
+        expected = hashlib.sha256(b"artifact").hexdigest()
+        self.assertEqual(result.stdout_sha256, expected)
+        self.assertTrue(result.verify_stdout_sha256(expected))
+        self.assertTrue(result.verify_stdout_sha256(expected.upper()))
+        self.assertFalse(result.verify_stdout_sha256("0" * 64))
+        self.assertFalse(result.verify_stdout_sha256("invalid"))
+
+    def test_empty_and_stderr_stream_digests(self):
+        result = ContainerResult(0, b"", b"warning")
+        self.assertEqual(result.stdout_sha256, hashlib.sha256(b"").hexdigest())
+        self.assertEqual(
+            result.stderr_sha256,
+            hashlib.sha256(b"warning").hexdigest(),
+        )
+        self.assertTrue(result.verify_stdout_sha256(hashlib.sha256(b"").hexdigest()))
 
 
 class ContainerSandboxRunnerTests(unittest.TestCase):
