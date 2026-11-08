@@ -88,8 +88,8 @@ print("mount-boundary-probe: PASS")
         config = ContainerSandboxConfig(
             image=IMAGE, command=("python", "-I", "-c",
                 "import sys; data=sys.stdin.buffer.read(); "
-                "assert data == b'artifact\\x00payload'; print(len(data))"),
-            input_payload=b"artifact\\x00payload", max_input_bytes=64,
+                "assert data == b'artifact' + bytes([0]) + b'payload'; print(len(data))"),
+            input_payload=b"artifact" + bytes([0]) + b"payload", max_input_bytes=64,
             max_output_bytes=1024,
         )
         result = RUNTIME.run_container(config, timeout_seconds=10, control=None)
