@@ -61,6 +61,14 @@ class ContainerSandboxConfigTests(unittest.TestCase):
                 mounts=(Mount("/etc", "/input"),),
             )
 
+    def test_rejects_mount_root_prefix_confusion(self):
+        with self.assertRaises(ValueError):
+            ContainerSandboxConfig(
+                image=IMAGE, command=("id",),
+                allowed_mount_roots=("/workspace",),
+                mounts=(Mount("/workspace-escape/data", "/input"),),
+            )
+
     def test_rejects_path_traversal_and_duplicate_targets(self):
         with self.assertRaises(ValueError):
             ContainerSandboxConfig(
@@ -74,6 +82,36 @@ class ContainerSandboxConfigTests(unittest.TestCase):
                 allowed_mount_roots=("/workspace",),
                 mounts=(Mount("/workspace/a", "/input"), Mount("/workspace/b", "/input")),
             )
+
+
+class DockerMountAdversarialTests(unittest.TestCase):
+    def test_rejects_symlink_mount_escape_after_resolution(self):
+        with tempfile.TemporaryDirectory() as parent:
+            allowed = os.path.join(parent, "allowed")
+            outside = os.path.join(parent, "outside")
+            os.mkdir(allowed)
+            os.mkdir(outside)
+            link = os.path.join(allowed, "escape")
+            try:
+                os.symlink(outside, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+            config = ContainerSandboxConfig(
+                image=IMAGE, command=("id",),
+                allowed_mount_roots=(allowed,),
+                mounts=(Mount(link, "/input"),),
+            )
+            with self.assertRaisesRegex(ValueError, "resolved mount source"):
+                DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
+
+    def test_command_flags_are_arguments_not_docker_options(self):
+        command = ("--privileged", "--network=host", "--volume=/:/host")
+        config = ContainerSandboxConfig(image=IMAGE, command=command)
+        argv = DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
+        image_index = argv.index(IMAGE)
+        self.assertEqual(tuple(argv[image_index + 1:]), command)
+        self.assertNotIn("--privileged", argv[:image_index])
+        self.assertNotIn("--network=host", argv[:image_index])
 
 
 class DockerCLIArgvTests(unittest.TestCase):
