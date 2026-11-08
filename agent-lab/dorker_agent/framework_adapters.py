@@ -4,7 +4,10 @@ from __future__ import annotations
 from typing import Mapping, Protocol
 
 from .capabilities import CapabilityPolicy, DEFAULT_POLICY
-from .execution import InMemoryExecutionLedger, SQLiteExecutionStore
+from .execution import (
+    ExecutionCancelledError, ExecutionControl, ExecutionDeadlineExceeded,
+    InMemoryExecutionLedger, SQLiteExecutionStore,
+)
 from .tasks import TaskRequest
 
 
@@ -40,13 +43,18 @@ def _invoke_with_ledger(
     *,
     ledger: InMemoryExecutionLedger | SQLiteExecutionStore | None,
     execution_id: str | None,
+    control: ExecutionControl | None,
 ) -> str:
     if (ledger is None) != (execution_id is None):
         raise ValueError("ledger and execution_id must be supplied together")
     if ledger is not None:
         ledger.begin(execution_id)
     try:
+        if control is not None:
+            control.check()
         result = invoke()
+        if control is not None:
+            control.check()
         if ledger is not None:
             ledger.succeed(execution_id, result)
         return result
@@ -70,19 +78,33 @@ class CrewAIAdapter:
     ) -> None:
         self._crew, self._policy, self._ledger = crew, policy, ledger
 
-    def run(self, task: TaskRequest, *, execution_id: str | None = None) -> str:
+    def run(
+        self, task: TaskRequest, *, execution_id: str | None = None,
+        control: ExecutionControl | None = None,
+    ) -> str:
         payload = _task_input(task)
         self._policy.require(self.CAPABILITY)
 
         def invoke() -> str:
             try:
-                return _response_text(self._crew.kickoff(inputs=payload), attribute="raw")
+                if control is None:
+                    result = self._crew.kickoff(inputs=payload)
+                else:
+                    contextual = getattr(self._crew, "kickoff_with_context", None)
+                    if not callable(contextual):
+                        raise TypeError("controlled execution requires kickoff_with_context(inputs, control)")
+                    result = contextual(inputs=payload, control=control)
+                return _response_text(result, attribute="raw")
+            except (ExecutionCancelledError, ExecutionDeadlineExceeded):
+                raise
             except FrameworkExecutionError:
                 raise
             except Exception as exc:
                 raise FrameworkExecutionError("CrewAI execution failed") from exc
 
-        return _invoke_with_ledger(invoke, ledger=self._ledger, execution_id=execution_id)
+        return _invoke_with_ledger(
+            invoke, ledger=self._ledger, execution_id=execution_id, control=control
+        )
 
 
 class LangChainAdapter:
@@ -99,16 +121,30 @@ class LangChainAdapter:
     ) -> None:
         self._runnable, self._policy, self._ledger = runnable, policy, ledger
 
-    def run(self, task: TaskRequest, *, execution_id: str | None = None) -> str:
+    def run(
+        self, task: TaskRequest, *, execution_id: str | None = None,
+        control: ExecutionControl | None = None,
+    ) -> str:
         payload = _task_input(task)
         self._policy.require(self.CAPABILITY)
 
         def invoke() -> str:
             try:
-                return _response_text(self._runnable.invoke(payload), attribute="content")
+                if control is None:
+                    result = self._runnable.invoke(payload)
+                else:
+                    contextual = getattr(self._runnable, "invoke_with_context", None)
+                    if not callable(contextual):
+                        raise TypeError("controlled execution requires invoke_with_context(input, control)")
+                    result = contextual(input=payload, control=control)
+                return _response_text(result, attribute="content")
+            except (ExecutionCancelledError, ExecutionDeadlineExceeded):
+                raise
             except FrameworkExecutionError:
                 raise
             except Exception as exc:
                 raise FrameworkExecutionError("LangChain execution failed") from exc
 
-        return _invoke_with_ledger(invoke, ledger=self._ledger, execution_id=execution_id)
+        return _invoke_with_ledger(
+            invoke, ledger=self._ledger, execution_id=execution_id, control=control
+        )
