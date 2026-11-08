@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dorker_agent.capabilities import CapabilityPolicy
 from dorker_agent.framework_adapters import CrewAIAdapter, FrameworkExecutionError, LangChainAdapter
 from dorker_agent.tasks import TaskRequest
-from dorker_agent.execution import DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger
+from dorker_agent.execution import DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger, SQLiteExecutionStore
 
 TASK = TaskRequest("Fix parser", "Parser fails on empty input.", "bug")
 
@@ -116,6 +116,17 @@ class FrameworkAdapterTests(unittest.TestCase):
         with self.assertRaises(FrameworkExecutionError):
             adapter.run(TASK, execution_id="issue-43")
         self.assertEqual(ledger.get("issue-43").state, ExecutionState.FAILED)
+
+    def test_sqlite_ledger_adapter_integration(self):
+        import tempfile
+        from pathlib import Path
+
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = SQLiteExecutionStore(Path(directory) / "agent.sqlite3")
+            adapter = LangChainAdapter(FakeRunnable(result="durable"), policy=policy, ledger=ledger)
+            self.assertEqual(adapter.run(TASK, execution_id="issue-99"), "durable")
+            self.assertEqual(ledger.get("issue-99").state, ExecutionState.SUCCEEDED)
 
     def test_ledger_and_id_must_be_paired(self):
         policy = CapabilityPolicy(frozenset({CrewAIAdapter.CAPABILITY}))
