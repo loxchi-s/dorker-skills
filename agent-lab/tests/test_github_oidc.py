@@ -3,10 +3,18 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from dorker_agent.artifacts import GitHubActorClaim, VerifiedGitHubActor
+from dorker_agent.artifacts import (
+    ArtifactDeletionPlan,
+    ContentAddressedArtifactStore,
+    GitHubActorClaim,
+    VerifiedGitHubActor,
+    SQLiteArtifactIndex,
+)
 _TEST_RSA_N = int(
     "9de13f2b9d901fdf6af7d16b254303c65c2b8544f3bd26d3f0d1cb76469bf8ec5d143c85f6780bed18d2d0ec6b615d96550b2d62579b813a0f18d97be8d730af07273002745dc051fcf9433b3aca9389c4ef11ea82f6396238f26b34b3a39299a2fa4d674d146c2721d92ca73d44ebc444be71225d5d0cd1885b595458bdcd3fabfa19e29d177dfb8eb72fb5750c924938a99a71996bc5a6adfc28aa28316fc7e6d4d9c2f7aa3509c8b03adac670f9a6e1c8249cb85c1c62137dcb207ff3e674f2c4b73bd797c3b9462345223c25ff5aea1da95c6abcbf5550d41ecf9e17f84953588648cad06bafa21fc0ba29fc032372c407839b40f882844151e20a61c341",
     16,
@@ -211,6 +219,32 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
         forged = GitHubActorClaim(202, "attacker", token_for(claims()))
         with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
             identity.verify(forged)
+
+    def test_sqlite_audit_index_uses_composed_verified_identity(self):
+        token = token_for(claims())
+        class TokenSource:
+            def acquire(self):
+                return token
+
+        identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
+        with tempfile.TemporaryDirectory() as directory:
+            blob_root = os.path.join(directory, "objects")
+            os.mkdir(blob_root)
+            blobs = ContentAddressedArtifactStore(blob_root)
+            database = os.path.join(directory, "audit.sqlite3")
+            index = SQLiteArtifactIndex(database, blobs, identity_verifier=identity)
+            claim = identity.acquire_claim()
+            plan = ArtifactDeletionPlan((), 0, 0, "a" * 64)
+
+            index.record_gc_plan(plan, claim=claim)
+
+            events = index.list_audit_events()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["actor"], "github:101:creator")
+            self.assertEqual(events[0]["action"], "gc_plan_created")
+            self.assertTrue(index.verify_audit_log())
+            with open(database, "rb") as handle:
+                self.assertNotIn(token.encode("ascii"), handle.read())
 
 
 class GitHubActionsOIDCVerifierTests(unittest.TestCase):
