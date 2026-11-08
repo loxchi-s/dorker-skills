@@ -58,6 +58,8 @@ print("docker-isolation-probe: PASS")
         with __import__("tempfile").TemporaryDirectory() as host_dir:
             fixture = Path(host_dir) / "fixture.txt"
             fixture.write_text("host-data")
+            fixture.chmod(0o644)
+            Path(host_dir).chmod(0o755)
             probe = r"""
 from pathlib import Path
 assert Path("/input/fixture.txt").read_text() == "host-data"
