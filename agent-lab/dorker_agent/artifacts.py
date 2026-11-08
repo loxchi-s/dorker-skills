@@ -286,10 +286,12 @@ class SQLiteArtifactIndex:
 
     def __init__(
         self, database: str | os.PathLike[str], blob_store: ContentAddressedArtifactStore,
-        *, max_records: int = 100_000, busy_timeout_ms: int = 5_000,
+        *, max_records: int = 100_000, max_audit_records: int = 100_000, busy_timeout_ms: int = 5_000,
     ) -> None:
         if isinstance(max_records, bool) or not isinstance(max_records, int) or max_records < 1:
             raise ValueError("max_records must be a positive integer")
+        if isinstance(max_audit_records, bool) or not isinstance(max_audit_records, int) or max_audit_records < 1:
+            raise ValueError("max_audit_records must be a positive integer")
         if isinstance(busy_timeout_ms, bool) or not isinstance(busy_timeout_ms, int) or busy_timeout_ms < 0:
             raise ValueError("busy_timeout_ms must be a non-negative integer")
         self._database = os.fspath(database)
@@ -297,6 +299,7 @@ class SQLiteArtifactIndex:
             raise ValueError("a durable SQLite file path is required")
         self._blob_store = blob_store
         self._max_records = max_records
+        self._max_audit_records = max_audit_records
         self._busy_timeout_ms = busy_timeout_ms
         self._lock = threading.RLock()
         Path(self._database).parent.mkdir(parents=True, exist_ok=True)
@@ -601,6 +604,10 @@ class SQLiteArtifactIndex:
             raise ValueError("audit event details exceed 64 KiB")
         with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            count = db.execute("SELECT COUNT(*) FROM artifact_audit_log").fetchone()[0]
+            if count >= self._max_audit_records:
+                db.rollback()
+                raise RuntimeError("artifact audit log capacity reached")
             row = db.execute(
                 "SELECT sequence, event_hash FROM artifact_audit_log ORDER BY sequence DESC LIMIT 1"
             ).fetchone()
