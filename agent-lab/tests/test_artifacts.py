@@ -10,6 +10,7 @@ from dorker_agent.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
     ContentAddressedArtifactStore,
+    SQLiteArtifactIndex,
 )
 
 
@@ -119,6 +120,86 @@ class ContentAddressedArtifactStoreTests(unittest.TestCase):
         self.assertEqual(len(digests), 8)
         self.assertEqual(len(set(digests)), 1)
         self.assertEqual(self.store.get(digests[0]), b"shared")
+
+
+
+class SQLiteArtifactIndexTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = os.path.join(self.temp.name, "objects")
+        os.mkdir(root)
+        self.blobs = ContentAddressedArtifactStore(root, max_artifact_bytes=1024)
+        self.db = os.path.join(self.temp.name, "index", "artifacts.sqlite3")
+        self.index = SQLiteArtifactIndex(self.db, self.blobs, max_records=10)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_put_and_retrieve_manifest_and_verified_bytes(self):
+        artifact_id = self.index.put(
+            b"report-data", name="report.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-42", created_at_unix_ms=42,
+        )
+        manifest, data = self.index.get(artifact_id)
+        self.assertEqual(data, b"report-data")
+        self.assertEqual(manifest.execution_id, "exec-42")
+        self.assertEqual(manifest.sha256, hashlib.sha256(data).hexdigest())
+
+    def test_manifest_and_blob_survive_reopen(self):
+        artifact_id = self.index.put(
+            b"persistent", name="persist.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-43",
+        )
+        reopened = SQLiteArtifactIndex(self.db, self.blobs)
+        self.assertEqual(reopened.get(artifact_id)[1], b"persistent")
+
+    def test_same_manifest_registration_is_idempotent(self):
+        first = self.index.put(
+            b"same", name="same.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-44", created_at_unix_ms=44,
+        )
+        second = self.index.put(
+            b"same", name="same.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-44", created_at_unix_ms=44,
+        )
+        self.assertEqual(first, second)
+
+    def test_same_blob_can_have_multiple_execution_manifests(self):
+        first = self.index.put(
+            b"shared", name="shared.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-A",
+        )
+        second = self.index.put(
+            b"shared", name="shared.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-B",
+        )
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(self.index.list_for_execution("exec-A")), 1)
+        self.assertEqual(len(self.index.list_for_execution("exec-B")), 1)
+
+    def test_index_capacity_is_bounded(self):
+        index = SQLiteArtifactIndex(self.db, self.blobs, max_records=1)
+        index.put(b"one", name="one", media_type="x", source="test")
+        with self.assertRaisesRegex(RuntimeError, "capacity"):
+            index.put(b"two", name="two", media_type="x", source="test")
+
+    def test_unknown_and_invalid_ids(self):
+        self.assertIsNone(self.index.get("0" * 64))
+        with self.assertRaises(ValueError):
+            self.index.get("../invalid")
+
+    def test_execution_query_limit_is_validated(self):
+        with self.assertRaises(ValueError):
+            self.index.list_for_execution("exec", limit=0)
+
+    def test_index_detects_missing_blob(self):
+        artifact_id = self.index.put(
+            b"gone", name="gone", media_type="x", source="test",
+        )
+        manifest = self.index.get_manifest(artifact_id)
+        os.unlink(os.path.join(self.blobs._root, manifest.sha256[:2], manifest.sha256[2:]))
+        with self.assertRaises(ArtifactNotFoundError):
+            self.index.get(artifact_id)
 
 
 if __name__ == "__main__":
