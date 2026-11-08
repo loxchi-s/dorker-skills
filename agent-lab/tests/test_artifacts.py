@@ -335,6 +335,26 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         self.assertTrue(self.index.verify_audit_log())
         self.assertTrue(self.blobs.contains(blob.sha256))
 
+    def test_gc_audit_rejects_duplicate_plan_and_second_decision(self):
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        with self.assertRaisesRegex(ValueError, "already been recorded"):
+            self.index.record_gc_plan(plan, claim=github_claim(202, "other"))
+        self.index.record_gc_approval(
+            plan.approval_token, claim=github_claim(202, "approver"), approved=True,
+        )
+        with self.assertRaisesRegex(ValueError, "already has a recorded decision"):
+            self.index.record_gc_approval(
+                plan.approval_token, claim=github_claim(303, "another"), approved=False,
+            )
+        self.assertEqual(len(self.index.list_audit_events()), 2)
+
     def test_gc_audit_requires_distinct_verified_github_actor(self):
         blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
         path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
