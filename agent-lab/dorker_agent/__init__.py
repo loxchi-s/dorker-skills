@@ -8,6 +8,13 @@ from .framework_adapters import (
 )
 from .tasks import TaskRequest
 
+from .artifacts import (
+    ArtifactIntegrityError,
+    ArtifactNotFoundError,
+    ArtifactStoreError,
+    ContentAddressedArtifactStore,
+)
+
 from .isolated_worker import (
     IsolatedWorkerRunner,
     ResourceLimits,
@@ -28,6 +35,10 @@ __all__ = [
     "ChatModel",
     "ModelMessage",
     "TaskRequest",
+    "ContentAddressedArtifactStore",
+    "ArtifactStoreError",
+    "ArtifactNotFoundError",
+    "ArtifactIntegrityError",
     "CrewAIAdapter",
     "LangChainAdapter",
     "FrameworkExecutionError",
