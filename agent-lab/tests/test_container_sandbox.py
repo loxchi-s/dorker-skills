@@ -47,6 +47,22 @@ class ContainerSandboxConfigTests(unittest.TestCase):
         config = ContainerSandboxConfig(image="sha256:" + "b" * 64, command=("python",))
         self.assertTrue(config.image.startswith("sha256:"))
 
+    def test_bounded_stdin_payload(self):
+        config = ContainerSandboxConfig(
+            image=IMAGE, command=("cat",), input_payload=b"artifact",
+            max_input_bytes=8,
+        )
+        self.assertEqual(config.input_payload, b"artifact")
+        with self.assertRaisesRegex(ValueError, "input payload exceeds"):
+            ContainerSandboxConfig(
+                image=IMAGE, command=("cat",), input_payload=b"12345",
+                max_input_bytes=4,
+            )
+        with self.assertRaisesRegex(ValueError, "input_payload must be bytes"):
+            ContainerSandboxConfig(
+                image=IMAGE, command=("cat",), input_payload="not-bytes",
+            )
+
     def test_rejects_mutable_image_and_root_user(self):
         with self.assertRaises(ValueError):
             ContainerSandboxConfig(image="python:latest", command=("python",))
