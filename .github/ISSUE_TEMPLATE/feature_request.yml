@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a bounded feature for Dorker Agent Lab
+title: "[FEATURE] "
+labels: ["agent-lab", "enhancement"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What outcome should this feature provide?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions for completion
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Security, compatibility, performance or scope limits
+    validations:
+      required: false
