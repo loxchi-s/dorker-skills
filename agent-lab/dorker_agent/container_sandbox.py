@@ -183,7 +183,7 @@ class ContainerSandboxRunner:
             if ledger is not None:
                 ledger.succeed(
                     execution_id,
-                    result.stdout.decode("utf-8", errors="replace"),
+                    result.stdout.decode("utf-8", errors="replace") or "<empty>",
                 )
             return result
         except (ExecutionCancelledError, ExecutionDeadlineExceeded,
