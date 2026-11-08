@@ -12,6 +12,10 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
 from .artifacts import GitHubActorClaim, VerifiedGitHubActor
 
 
@@ -19,7 +23,6 @@ ISSUER = "https://token.actions.githubusercontent.com"
 JWKS_URL = f"{ISSUER}/.well-known/jwks"
 _MAX_JWKS_BYTES = 256 * 1024
 _MAX_TOKEN_BYTES = 16 * 1024
-_SHA256_DIGEST_INFO_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
 
 
 class OIDCVerificationError(ValueError):
@@ -185,17 +188,13 @@ class GitHubActionsOIDCVerifier:
         exponent = _decode_integer(jwk.get("e"))
         if not 2048 <= modulus.bit_length() <= 8192 or exponent < 3 or exponent % 2 == 0 or exponent.bit_length() > 32:
             raise OIDCVerificationError("unsafe RSA public key parameters")
-        size = (modulus.bit_length() + 7) // 8
-        if len(signature) != size:
-            raise OIDCVerificationError("invalid RSA signature length")
-        encoded = pow(int.from_bytes(signature, "big"), exponent, modulus).to_bytes(size, "big")
-        digest_info = _SHA256_DIGEST_INFO_PREFIX + hashlib.sha256(signing_input).digest()
-        padding_size = size - len(digest_info) - 3
-        if padding_size < 8:
-            raise OIDCVerificationError("RSA modulus is too small")
-        expected = b"\x00\x01" + b"\xff" * padding_size + b"\x00" + digest_info
-        if not hmac.compare_digest(encoded, expected):
-            raise OIDCVerificationError("OIDC JWT signature verification failed")
+        try:
+            public_key = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+            public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+        except InvalidSignature as exc:
+            raise OIDCVerificationError("OIDC JWT signature verification failed") from exc
+        except ValueError as exc:
+            raise OIDCVerificationError("invalid RSA public key") from exc
 
 
 def _decode_segment(value: str) -> object:
