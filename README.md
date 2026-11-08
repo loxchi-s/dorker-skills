@@ -12,7 +12,8 @@ Private GitHub registry for Dorker. Skills are instructions and metadata, not ex
 - `agent-lab/`: provider-agnostic coding-agent scaffold, tests and GitHub Actions CI.
 - `POLICY.md`: execution and supply-chain policy.
 - `SOURCES.md`: upstream discovery references and import policy.
-- `upstream-candidates.json`: machine-readable candidate registry; discovery-only, unreviewed and runtime-disabled.
+- `upstream-candidates.json`: machine-readable upstream candidate registry with pinned review metadata.
+- `UPSTREAM_REVIEW.md`: initial screening decisions, license notes and Dorker compatibility gates.
 
 ## Validate
 ```sh
