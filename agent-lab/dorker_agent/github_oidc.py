@@ -4,12 +4,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
+import hmac
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
-from urllib.parse import urlparse
 
 from .artifacts import GitHubActorClaim, VerifiedGitHubActor
 
@@ -81,6 +82,8 @@ class GitHubActionsJWKSProvider:
         value = _strict_json(raw)
         if not isinstance(value, dict) or not isinstance(value.get("keys"), list):
             raise OIDCVerificationError("invalid GitHub JWKS document")
+        if not 1 <= len(value["keys"]) <= 32:
+            raise OIDCVerificationError("GitHub JWKS key count exceeds bounds")
         return value
 
 
@@ -163,7 +166,7 @@ class GitHubActionsOIDCVerifier:
         exp, issued = payload.get("exp"), payload.get("iat")
         nbf = payload.get("nbf", issued)
         for name, value in (("exp", exp), ("iat", issued), ("nbf", nbf)):
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise OIDCVerificationError(f"invalid {name} claim")
         skew = policy.clock_skew_seconds
         if now > exp + skew:
@@ -178,7 +181,7 @@ class GitHubActionsOIDCVerifier:
     def _verify_rs256(signing_input: bytes, signature: bytes, jwk: dict[str, object]) -> None:
         modulus = _decode_integer(jwk.get("n"))
         exponent = _decode_integer(jwk.get("e"))
-        if modulus.bit_length() < 2048 or exponent < 3 or exponent % 2 == 0:
+        if not 2048 <= modulus.bit_length() <= 8192 or exponent < 3 or exponent % 2 == 0 or exponent.bit_length() > 32:
             raise OIDCVerificationError("unsafe RSA public key parameters")
         size = (modulus.bit_length() + 7) // 8
         if len(signature) != size:
@@ -189,7 +192,7 @@ class GitHubActionsOIDCVerifier:
         if padding_size < 8:
             raise OIDCVerificationError("RSA modulus is too small")
         expected = b"\x00\x01" + b"\xff" * padding_size + b"\x00" + digest_info
-        if not __import__("hmac").compare_digest(encoded, expected):
+        if not hmac.compare_digest(encoded, expected):
             raise OIDCVerificationError("OIDC JWT signature verification failed")
 
 
