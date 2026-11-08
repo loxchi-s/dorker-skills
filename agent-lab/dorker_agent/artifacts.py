@@ -643,6 +643,25 @@ class SQLiteArtifactIndex:
             raise ValueError("audit event details exceed 64 KiB")
         with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            if action == "gc_plan_created":
+                duplicate_plan = db.execute(
+                    "SELECT 1 FROM artifact_audit_log "
+                    "WHERE action='gc_plan_created' AND approval_token=? LIMIT 1",
+                    (approval_token,),
+                ).fetchone()
+                if duplicate_plan is not None:
+                    db.rollback()
+                    raise ValueError("GC plan token has already been recorded")
+            if action in ("gc_plan_approved", "gc_plan_rejected"):
+                prior_decision = db.execute(
+                    "SELECT 1 FROM artifact_audit_log WHERE "
+                    "action IN ('gc_plan_approved', 'gc_plan_rejected') "
+                    "AND approval_token=? LIMIT 1",
+                    (approval_token,),
+                ).fetchone()
+                if prior_decision is not None:
+                    db.rollback()
+                    raise ValueError("GC plan already has a recorded decision")
             if require_distinct_approver:
                 plan_row = db.execute(
                     "SELECT details_json FROM artifact_audit_log "
