@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a reproducible defect for the Dorker Agent Lab
+title: "[BUG] "
+labels: ["agent-lab", "bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What failed?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps and expected versus actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Runtime, OS, versions and relevant logs (remove secrets)
+    validations:
+      required: false
