@@ -125,7 +125,7 @@ class SQLiteExecutionStore:
 
     def begin(self, execution_id: str) -> None:
         _validate_id(execution_id)
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT COUNT(*) FROM executions").fetchone()[0] >= self._max_records:
                 db.rollback()
@@ -169,7 +169,7 @@ class SQLiteExecutionStore:
 
     def recover_interrupted(self) -> int:
         """Mark records left RUNNING by a prior process as failed."""
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             now = time.time()
             cursor = db.execute(
@@ -184,7 +184,7 @@ class SQLiteExecutionStore:
         self, execution_id: str, state: str, *,
         result: str | None, error_type: str | None,
     ) -> None:
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db:
             cursor = db.execute(
                 "UPDATE executions SET state=?, result=?, error_type=?, updated_at=? "
                 "WHERE execution_id=? AND state='running'",
