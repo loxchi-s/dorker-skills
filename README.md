@@ -9,6 +9,7 @@ Private GitHub registry for Dorker. Skills are instructions and metadata, not ex
 - `tools/validate_registry.py`: standard-library registry validator.
 - `tools/install_skill.py`: local copy installer with SHA-256 provenance.
 - `tests/test_validate_registry.py`: validator tests.
+- `agent-lab/`: provider-agnostic coding-agent scaffold, tests and GitHub Actions CI.
 - `POLICY.md`: execution and supply-chain policy.
 - `SOURCES.md`: upstream discovery references.
 
