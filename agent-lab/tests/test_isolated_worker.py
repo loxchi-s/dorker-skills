@@ -39,6 +39,16 @@ def large_handler(context, payload):
     return "x" * payload["size"]
 
 
+def child_process_handler(context, payload):
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    return {"pid": child.pid, "group": os.getpgrp()}
+
+
+def limits_handler(context, payload):
+    import resource
+    return {"nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
+
+
 def failing_handler(context, payload):
     raise RuntimeError("sensitive detail must not cross process boundary")
 
@@ -51,6 +61,8 @@ class IsolatedWorkerTests(unittest.TestCase):
             "cooperative": cooperative_handler,
             "large": large_handler,
             "fail": failing_handler,
+            "child": child_process_handler,
+            "limits": limits_handler,
         }, **kwargs)
 
     def test_spawn_worker_returns_json_value_and_updates_ledger(self):
