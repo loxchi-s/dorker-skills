@@ -35,7 +35,7 @@ class FakeJWKS:
         self.document = {
             "keys": [{
                 "kty": "RSA", "kid": "test-key", "alg": "RS256", "use": "sig",
-                "n": b64url(b"\xff" * 256), "e": b64url(bytes.fromhex("010001")),
+                "n": b64url(_TEST_RSA_N.to_bytes(256, "big")), "e": b64url(bytes.fromhex("010001")),
             }]
         }
 
@@ -49,8 +49,8 @@ def token_for(payload):
     encoded_payload = b64url(json.dumps(payload, separators=(",", ":")).encode())
     signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
     digest_info = _SHA256_DIGEST_INFO_PREFIX + hashlib.sha256(signing_input).digest()
-    padding = b"\\xff" * (256 - len(digest_info) - 3)
-    encoded_message = b"\\x00\\x01" + padding + b"\\x00" + digest_info
+    padding = bytes([0xff]) * (256 - len(digest_info) - 3)
+    encoded_message = bytes([0x00, 0x01]) + padding + bytes([0x00]) + digest_info
     signature_int = pow(int.from_bytes(encoded_message, "big"), _TEST_RSA_D, _TEST_RSA_N)
     signature = signature_int.to_bytes(256, "big")
     return f"{encoded_header}.{encoded_payload}.{b64url(signature)}"
