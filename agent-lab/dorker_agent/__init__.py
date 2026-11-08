@@ -13,6 +13,7 @@ from .artifacts import (
     ArtifactNotFoundError,
     ArtifactStoreError,
     ContentAddressedArtifactStore,
+    SQLiteArtifactIndex,
 )
 
 from .isolated_worker import (
@@ -36,6 +37,7 @@ __all__ = [
     "ModelMessage",
     "TaskRequest",
     "ContentAddressedArtifactStore",
+    "SQLiteArtifactIndex",
     "ArtifactStoreError",
     "ArtifactNotFoundError",
     "ArtifactIntegrityError",
