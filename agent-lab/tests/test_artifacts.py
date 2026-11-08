@@ -201,6 +201,56 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.index.list_for_execution("exec", limit=0)
 
+    def test_gc_dry_run_reports_only_verified_unreferenced_blobs(self):
+        orphan = self.blobs.put(
+            b"orphan", name="orphan.bin", media_type="application/octet-stream",
+            source="test",
+        )
+        self.index.put(
+            b"referenced", name="kept.bin", media_type="application/octet-stream",
+            source="test", execution_id="exec-keep",
+        )
+        report = self.index.dry_run_gc()
+        self.assertEqual([item.sha256 for item in report.orphaned], [orphan.sha256])
+        self.assertEqual(report.referenced_objects, 1)
+        self.assertEqual(report.scanned_objects, 2)
+        self.assertFalse(report.truncated)
+        self.assertEqual(self.blobs.get(orphan.sha256), b"orphan")
+
+    def test_gc_dry_run_reports_missing_and_corrupt_objects(self):
+        missing_id = self.index.put(
+            b"missing", name="missing.bin", media_type="x", source="test",
+        )
+        corrupt_id = self.index.put(
+            b"corrupt", name="corrupt.bin", media_type="x", source="test",
+        )
+        missing_manifest = self.index.get_manifest(missing_id)
+        corrupt_manifest = self.index.get_manifest(corrupt_id)
+        os.unlink(os.path.join(
+            self.blobs._root, missing_manifest.sha256[:2], missing_manifest.sha256[2:]
+        ))
+        corrupt_path = os.path.join(
+            self.blobs._root, corrupt_manifest.sha256[:2], corrupt_manifest.sha256[2:]
+        )
+        with open(corrupt_path, "wb") as handle:
+            handle.write(b"tampered")
+        report = self.index.dry_run_gc()
+        self.assertEqual(report.missing_digests, (missing_manifest.sha256,))
+        self.assertEqual(report.corrupt_digests, (corrupt_manifest.sha256,))
+        self.assertEqual(report.orphaned, ())
+
+    def test_gc_dry_run_is_bounded_and_never_deletes(self):
+        first = self.blobs.put(b"one", name="one", media_type="x", source="test")
+        self.blobs.put(b"two", name="two", media_type="x", source="test")
+        report = self.index.dry_run_gc(max_scan_objects=1)
+        self.assertEqual(report.scanned_objects, 1)
+        self.assertTrue(report.truncated)
+        self.assertTrue(self.blobs.contains(first.sha256))
+
+    def test_gc_dry_run_rejects_invalid_scan_limit(self):
+        with self.assertRaises(ValueError):
+            self.index.dry_run_gc(max_scan_objects=0)
+
     def test_index_detects_missing_blob(self):
         artifact_id = self.index.put(
             b"gone", name="gone", media_type="x", source="test",
