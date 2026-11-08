@@ -10,6 +10,8 @@ from .tasks import TaskRequest
 
 from .artifacts import (
     ArtifactIntegrityError,
+    ArtifactGCDryRun,
+    ArtifactObjectInfo,
     ArtifactNotFoundError,
     ArtifactStoreError,
     ContentAddressedArtifactStore,
@@ -41,6 +43,8 @@ __all__ = [
     "ArtifactStoreError",
     "ArtifactNotFoundError",
     "ArtifactIntegrityError",
+    "ArtifactGCDryRun",
+    "ArtifactObjectInfo",
     "CrewAIAdapter",
     "LangChainAdapter",
     "FrameworkExecutionError",
