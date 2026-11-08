@@ -43,6 +43,10 @@ class ContainerSandboxConfigTests(unittest.TestCase):
         self.assertEqual(config.user_gid, 10000)
         self.assertEqual(config.mounts, ())
 
+    def test_accepts_content_addressed_local_image_id(self):
+        config = ContainerSandboxConfig(image="sha256:" + "b" * 64, command=("python",))
+        self.assertTrue(config.image.startswith("sha256:"))
+
     def test_rejects_mutable_image_and_root_user(self):
         with self.assertRaises(ValueError):
             ContainerSandboxConfig(image="python:latest", command=("python",))
