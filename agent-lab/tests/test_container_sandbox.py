@@ -53,12 +53,20 @@ class ContainerSandboxConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ContainerSandboxConfig(image=IMAGE, command=("python",), user_uid=0)
 
+    def test_host_mounts_are_disabled_by_default(self):
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(ValueError, "host mounts are disabled"):
+                ContainerSandboxConfig(
+                    image=IMAGE, command=("id",), allowed_mount_roots=(root,),
+                    mounts=(Mount(root, "/input"),),
+                )
+
     def test_mount_must_be_within_allowlisted_root(self):
         with self.assertRaises(ValueError):
             ContainerSandboxConfig(
                 image=IMAGE, command=("python",),
                 allowed_mount_roots=("/workspace",),
-                mounts=(Mount("/etc", "/input"),),
+                mounts=(Mount("/etc", "/input"),), allow_host_mounts=True,
             )
 
     def test_rejects_mount_root_prefix_confusion(self):
@@ -66,7 +74,7 @@ class ContainerSandboxConfigTests(unittest.TestCase):
             ContainerSandboxConfig(
                 image=IMAGE, command=("id",),
                 allowed_mount_roots=("/workspace",),
-                mounts=(Mount("/workspace-escape/data", "/input"),),
+                mounts=(Mount("/workspace-escape/data", "/input"),), allow_host_mounts=True,
             )
 
     def test_rejects_path_traversal_and_duplicate_targets(self):
@@ -74,13 +82,14 @@ class ContainerSandboxConfigTests(unittest.TestCase):
             ContainerSandboxConfig(
                 image=IMAGE, command=("python",),
                 allowed_mount_roots=("/workspace",),
-                mounts=(Mount("/workspace/../etc", "/input"),),
+                mounts=(Mount("/workspace/../etc", "/input"),), allow_host_mounts=True,
             )
         with self.assertRaises(ValueError):
             ContainerSandboxConfig(
                 image=IMAGE, command=("python",),
                 allowed_mount_roots=("/workspace",),
                 mounts=(Mount("/workspace/a", "/input"), Mount("/workspace/b", "/input")),
+                allow_host_mounts=True,
             )
 
 
@@ -99,7 +108,7 @@ class DockerMountAdversarialTests(unittest.TestCase):
             config = ContainerSandboxConfig(
                 image=IMAGE, command=("id",),
                 allowed_mount_roots=(allowed,),
-                mounts=(Mount(link, "/input"),),
+                mounts=(Mount(link, "/input"),), allow_host_mounts=True,
             )
             with self.assertRaisesRegex(ValueError, "resolved mount source"):
                 DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
@@ -136,7 +145,7 @@ class DockerCLIArgvTests(unittest.TestCase):
             config = ContainerSandboxConfig(
                 image=IMAGE, command=("cat",),
                 allowed_mount_roots=(root,),
-                mounts=(Mount(source, "/input"),),
+                mounts=(Mount(source, "/input"),), allow_host_mounts=True,
             )
             argv = DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
             mount_arg = next(arg for arg in argv if arg.startswith("--mount="))
