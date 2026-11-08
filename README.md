@@ -7,7 +7,9 @@ Private GitHub registry for Dorker. Skills are instructions and metadata, not ex
 - `catalog.yaml`: human-readable legacy index; `catalog.json` is canonical for tools.
 - `skills/<name>/SKILL.md`: portable Agent Skill definitions.
 - `tools/validate_registry.py`: standard-library registry validator.
-- `tools/install_skill.py`: local copy installer with SHA-256 provenance.\n- `tools/skill_manager.py`: list, inspect, pin and verify skill provenance without executing content.\n- `tests/test_skill_manager.py`: Skill Manager policy and integrity tests.
+- `tools/install_skill.py`: local copy installer with SHA-256 provenance.
+- `tools/skill_manager.py`: list, inspect, pin and verify skill provenance without executing content.
+- `tests/test_skill_manager.py`: Skill Manager policy and integrity tests.
 - `tests/test_validate_registry.py`: validator tests.
 - `agent-lab/`: provider-agnostic coding-agent scaffold, tests and GitHub Actions CI.
 - `POLICY.md`: execution and supply-chain policy.
@@ -22,7 +24,21 @@ python tools/validate_registry.py --root .
 python -m unittest discover -s tests -v
 ```
 
-## Manage skill definitions\n\n```sh\npython tools/skill_manager.py list --root .\npython tools/skill_manager.py inspect python-engineering --root .\npython tools/skill_manager.py verify --root .\n```\n\nPinning is dry-run by default. It requires catalog status `reviewed` or `tested`, an immutable commit SHA, a GitHub source URL, a license identifier, and explicit manual-review confirmation. Add `--apply` only to write `pins.json`; this records provenance and a content hash, not permission to execute.\n\n```sh\npython tools/skill_manager.py pin python-engineering --root . --revision <40-char-commit-sha> --source-url https://github.com/owner/repo --license MIT --reviewed\n```\n\n## Install a definition locally
+## Manage skill definitions
+
+```sh
+python tools/skill_manager.py --root . list
+python tools/skill_manager.py --root . inspect python-engineering
+python tools/skill_manager.py --root . verify
+```
+
+Pinning is dry-run by default. It requires catalog status `reviewed` or `tested`, an immutable commit SHA, a GitHub source URL, a license identifier, and explicit manual-review confirmation. Add `--apply` only to write `pins.json`; this records provenance and a content hash, not permission to execute.
+
+```sh
+python tools/skill_manager.py --root . pin python-engineering --revision <40-char-commit-sha> --source-url https://github.com/owner/repo --license MIT --reviewed
+```
+
+## Install a definition locally
 First obtain the immutable commit SHA from GitHub, then run a dry-run:
 ```sh
 python tools/install_skill.py python-engineering --root . --revision <40-char-commit-sha>
