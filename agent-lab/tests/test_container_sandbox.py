@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 
 from dorker_agent.container_sandbox import (
@@ -8,6 +10,7 @@ from dorker_agent.container_sandbox import (
     ContainerResult,
     ContainerSandboxConfig,
     ContainerSandboxRunner,
+    DockerCLIContainerRuntime,
     Mount,
 )
 from dorker_agent.execution import (
@@ -66,6 +69,60 @@ class ContainerSandboxConfigTests(unittest.TestCase):
                 image=IMAGE, command=("python",),
                 allowed_mount_roots=("/workspace",),
                 mounts=(Mount("/workspace/a", "/input"), Mount("/workspace/b", "/input")),
+            )
+
+
+class DockerCLIArgvTests(unittest.TestCase):
+    def test_builds_hardened_argv_without_shell(self):
+        runtime = DockerCLIContainerRuntime("/usr/bin/docker")
+        config = ContainerSandboxConfig(image=IMAGE, command=("python", "-c", "print('a b')"))
+        argv = runtime.build_argv(config, "/tmp/container.id")
+        self.assertEqual(argv[0:3], ["/usr/bin/docker", "run", "--rm"])
+        for flag in (
+            "--pull=never", "--network=none", "--read-only", "--cap-drop=ALL",
+            "--security-opt=no-new-privileges:true", "--user=10000:10000",
+            "--memory=536870912", "--cpus=1.0", "--pids-limit=64",
+        ):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-4:], [IMAGE, "python", "-c", "print('a b')"])
+        self.assertFalse(any("privileged" in arg for arg in argv))
+
+    def test_mounts_are_read_only_by_default_and_checked_after_resolution(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "data")
+            os.mkdir(source)
+            config = ContainerSandboxConfig(
+                image=IMAGE, command=("cat",),
+                allowed_mount_roots=(root,),
+                mounts=(Mount(source, "/input"),),
+            )
+            argv = DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
+            mount_arg = next(arg for arg in argv if arg.startswith("--mount="))
+            self.assertTrue(mount_arg.endswith(",readonly"))
+
+    def test_rejects_unix_socket_mount(self):
+        if not hasattr(__import__("socket"), "AF_UNIX"):
+            self.skipTest("Unix sockets unavailable")
+        import socket
+        with tempfile.TemporaryDirectory() as root:
+            sock_path = os.path.join(root, "control.sock")
+            server = socket.socket(socket.AF_UNIX)
+            try:
+                server.bind(sock_path)
+                config = ContainerSandboxConfig(
+                    image=IMAGE, command=("id",),
+                    allowed_mount_roots=(root,),
+                    mounts=(Mount(sock_path, "/control.sock"),),
+                )
+                with self.assertRaises(ValueError):
+                    DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
+            finally:
+                server.close()
+
+    def test_rejects_relative_cidfile(self):
+        with self.assertRaises(ValueError):
+            DockerCLIContainerRuntime().build_argv(
+                ContainerSandboxConfig(image=IMAGE, command=("id",)), "relative"
             )
 
 
