@@ -61,3 +61,27 @@ The repository root `LICENSE` states Creative Commons Attribution-ShareAlike 4.0
 - No upstream content copied; no runtime permissions granted.
 - File-level SHA-256 values not yet recorded because the files have not been imported.
 - No CI run or execution test is claimed by this review.
+
+
+## Dorker-native adaptations created
+
+The following Dorker-authored workflow files were added after screening the pinned Superpowers revision:
+
+- `skills/brainstorming/SKILL.md`
+- `skills/writing-plans/SKILL.md`
+- `skills/test-driven-development/SKILL.md`
+- `skills/systematic-debugging/SKILL.md`
+- `skills/verification-before-completion/SKILL.md`
+
+These are Dorker-native drafts, not verbatim upstream imports. They add GitHub-only constraints, explicit approval boundaries, truthful test-status reporting and restrictions against fabricated execution evidence. They are registered in `catalog.json`.
+
+Trail of Bits skills were not copied or adapted. Their reviewed workflows depend on additional reference files and specialized tools (including Workflow, Task, Glob and Read) that are not part of the current Agent Lab contract. They remain deferred pending a full resource and dependency review.
+
+## Current implementation status
+
+- Implemented: five Dorker-native skill draft files and five catalog entries.
+- Implemented: upstream attribution and license provenance in `THIRD_PARTY_NOTICES.md`.
+- Implemented: README links and candidate-registry adaptation metadata.
+- Runtime: remains disabled (`runtime_enabled: false`).
+- Tested: not yet verified by a fresh GitHub Actions run.
+- Validated: registry validator and tests have not yet been executed in this session.
