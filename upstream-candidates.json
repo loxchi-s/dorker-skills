@@ -36,12 +36,28 @@
       ],
       "default_branch": "main",
       "status": "discovered",
-      "license_status": "not_verified",
-      "revision": null,
+      "license_status": "MIT_verified_at_repository_root",
+      "revision": "22f0b463e7a5e579904dd6211a520321035526f7",
       "content_sha256": null,
       "reviewed_by": null,
       "approved_for_import": false,
-      "runtime_enabled": false
+      "runtime_enabled": false,
+      "screening_status": "reviewed",
+      "recommended_skills": [
+        "brainstorming",
+        "writing-plans",
+        "test-driven-development",
+        "systematic-debugging",
+        "verification-before-completion"
+      ],
+      "deferred_skills": [
+        "subagent-driven-development",
+        "dispatching-parallel-agents",
+        "using-git-worktrees",
+        "executing-plans",
+        "using-superpowers"
+      ],
+      "review_note": "Selected process skills fit the Dorker coding-agent workflow but require adaptation to preserve explicit approval gates and GitHub-only operation. Deferred skills require subagent/worktree/runtime capabilities or contain mandatory invocation rules that conflict with Dorker policy."
     },
     {
       "repository": "obra/superpowers-skills",
@@ -109,12 +125,21 @@
       ],
       "default_branch": "main",
       "status": "discovered",
-      "license_status": "not_verified",
-      "revision": null,
+      "license_status": "CC-BY-SA-4.0_verified_at_repository_root",
+      "revision": "e4dd0bb5b15535f7c5a0834187dffba6ac37e4ff",
       "content_sha256": null,
       "reviewed_by": null,
       "approved_for_import": false,
-      "runtime_enabled": false
+      "runtime_enabled": false,
+      "screening_status": "reviewed",
+      "recommended_skills": [
+        "agentic-actions-auditor",
+        "audit-context-building"
+      ],
+      "deferred_skills": [
+        "code-improver"
+      ],
+      "review_note": "High-value security guidance. Import requires attribution and ShareAlike compliance, plus review of per-skill assets and tool dependencies. code-improver expects Workflow/Task tools unavailable in current Dorker scaffold."
     },
     {
       "repository": "github/awesome-copilot",
