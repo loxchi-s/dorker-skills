@@ -64,6 +64,8 @@ class ContainerSandboxConfig:
     pids_limit: int = 64
     tmpfs_bytes: int = 64 * 1024 * 1024
     max_output_bytes: int = 256 * 1024
+    input_payload: bytes = b""
+    max_input_bytes: int = 1024 * 1024
 
     def __post_init__(self) -> None:
         if not isinstance(self.image, str) or not _DIGEST_IMAGE.fullmatch(self.image):
@@ -76,9 +78,14 @@ class ContainerSandboxConfig:
             ("user_uid", self.user_uid), ("user_gid", self.user_gid),
             ("memory_bytes", self.memory_bytes), ("pids_limit", self.pids_limit),
             ("tmpfs_bytes", self.tmpfs_bytes), ("max_output_bytes", self.max_output_bytes),
+            ("max_input_bytes", self.max_input_bytes),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if not isinstance(self.input_payload, bytes):
+            raise ValueError("input_payload must be bytes")
+        if len(self.input_payload) > self.max_input_bytes:
+            raise ValueError("input payload exceeds max_input_bytes")
         if self.user_uid == 0 or self.user_gid == 0:
             raise ValueError("container user must be non-root")
         if isinstance(self.cpu_limit, bool) or not isinstance(self.cpu_limit, (int, float)):
@@ -200,7 +207,7 @@ class DockerCLIContainerRuntime:
             argv = self.build_argv(config, cidfile)
             try:
                 process = subprocess.Popen(
-                    argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, shell=False, close_fds=True,
                 )
             except OSError as exc:
@@ -233,6 +240,25 @@ class DockerCLIContainerRuntime:
             err_thread = threading.Thread(target=drain, args=(process.stderr, stderr_parts), daemon=True)
             out_thread.start()
             err_thread.start()
+
+            def feed_stdin() -> None:
+                try:
+                    if process.stdin is not None:
+                        view = memoryview(config.input_payload)
+                        for offset in range(0, len(view), 65536):
+                            process.stdin.write(view[offset:offset + 65536])
+                        process.stdin.flush()
+                except (BrokenPipeError, OSError):
+                    pass
+                finally:
+                    if process.stdin is not None:
+                        try:
+                            process.stdin.close()
+                        except OSError:
+                            pass
+
+            input_thread = threading.Thread(target=feed_stdin, daemon=True)
+            input_thread.start()
             deadline = time.monotonic() + float(timeout_seconds)
             forced_stop = False
             try:
@@ -263,6 +289,7 @@ class DockerCLIContainerRuntime:
                     self._stop_container(cidfile)
                     process.kill()
                 process.wait()
+                input_thread.join(timeout=2)
                 out_thread.join(timeout=2)
                 err_thread.join(timeout=2)
                 if forced_stop:
