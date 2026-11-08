@@ -1,4 +1,4 @@
-"""GitHub Actions OIDC token verification using the standard library only."""
+"""GitHub Actions OIDC token acquisition and verification."""
 from __future__ import annotations
 
 import base64
