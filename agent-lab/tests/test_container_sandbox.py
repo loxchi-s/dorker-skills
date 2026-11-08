@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from dorker_agent.container_sandbox import (
+    ArtifactManifest,
     ContainerArtifactIntegrityError,
     ContainerExitError,
     ContainerOutputLimitError,
@@ -203,6 +204,44 @@ class DockerCLIArgvTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DockerCLIContainerRuntime().build_argv(
                 ContainerSandboxConfig(image=IMAGE, command=("id",)), "relative"
+            )
+
+
+class ArtifactManifestTests(unittest.TestCase):
+    def test_manifest_is_deterministic_and_verifiable(self):
+        data = b"artifact\\x00payload"
+        manifest = ArtifactManifest.from_bytes(
+            name="result.bin", media_type="application/octet-stream",
+            data=data, source="container-stdout", execution_id="run-1",
+            created_at_unix_ms=123456,
+        )
+        self.assertEqual(manifest.size_bytes, len(data))
+        self.assertEqual(manifest.sha256, hashlib.sha256(data).hexdigest())
+        self.assertTrue(manifest.verify(data, max_bytes=64))
+        self.assertFalse(manifest.verify(data + b"x", max_bytes=64))
+        self.assertFalse(manifest.verify(data, max_bytes=4))
+        self.assertEqual(manifest.to_json(), manifest.to_json())
+        self.assertIn('"execution_id":"run-1"', manifest.to_json())
+
+    def test_manifest_rejects_invalid_metadata(self):
+        with self.assertRaises(ValueError):
+            ArtifactManifest(
+                name="../secret", media_type="application/octet-stream",
+                size_bytes=0, sha256="0" * 64, source="test",
+            )
+        with self.assertRaises(ValueError):
+            ArtifactManifest(
+                name="x", media_type="x", size_bytes=-1,
+                sha256="0" * 64, source="test",
+            )
+        with self.assertRaises(ValueError):
+            ArtifactManifest(
+                name="x", media_type="x", size_bytes=0,
+                sha256="not-a-digest", source="test",
+            )
+        with self.assertRaises(TypeError):
+            ArtifactManifest.from_bytes(
+                name="x", media_type="x", data="not-bytes", source="test",
             )
 
 
