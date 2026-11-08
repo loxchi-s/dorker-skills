@@ -406,11 +406,11 @@ class ContainerSandboxRunner:
                 raise ContainerSandboxError("runtime exit code must be an integer")
             if control is not None:
                 control.check()
+            if result.exit_code != 0:
+                raise ContainerExitError(f"container exited with status {result.exit_code}")
             expected_digest = self._config.expected_stdout_sha256
             if expected_digest is not None and not result.verify_stdout_sha256(expected_digest):
                 raise ContainerArtifactIntegrityError("stdout SHA-256 did not match expected digest")
-            if result.exit_code != 0:
-                raise ContainerExitError(f"container exited with status {result.exit_code}")
             if ledger is not None:
                 ledger.succeed(
                     execution_id,
