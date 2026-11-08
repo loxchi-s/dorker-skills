@@ -203,14 +203,14 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
             with self.assertRaises(OIDCVerificationError):
                 identity.acquire_claim()
 
-    def test_signed_actor_mismatch_fails_verification(self):
+    def test_forged_claim_actor_fails_verification(self):
         class TokenSource:
             def acquire(self):
-                return token_for(claims(actor_id="202", actor="attacker"))
+                return token_for(claims())
         identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
-        claim = identity.acquire_claim()
+        forged = GitHubActorClaim(202, "attacker", token_for(claims()))
         with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
-            identity.verify(claim)
+            identity.verify(forged)
 
 
 class GitHubActionsOIDCVerifierTests(unittest.TestCase):
