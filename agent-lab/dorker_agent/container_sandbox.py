@@ -5,6 +5,8 @@ socket or credentials to an agent. This adapter is Linux-host oriented.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import math
 import os
 import re
@@ -66,6 +68,10 @@ class ContainerSandboxConfig:
     max_output_bytes: int = 256 * 1024
     input_payload: bytes = b""
     max_input_bytes: int = 1024 * 1024
+
+    @property
+    def input_sha256(self) -> str:
+        return hashlib.sha256(self.input_payload).hexdigest()
 
     def __post_init__(self) -> None:
         if not isinstance(self.image, str) or not _DIGEST_IMAGE.fullmatch(self.image):
@@ -136,6 +142,26 @@ class ContainerResult:
     exit_code: int
     stdout: bytes
     stderr: bytes
+
+    @property
+    def stdout_sha256(self) -> str:
+        """SHA-256 of the exact bounded stdout byte stream."""
+        return hashlib.sha256(self.stdout).hexdigest()
+
+    @property
+    def stderr_sha256(self) -> str:
+        """SHA-256 of the exact bounded stderr byte stream."""
+        return hashlib.sha256(self.stderr).hexdigest()
+
+    def verify_stdout_sha256(self, expected: str) -> bool:
+        """Compare an expected lowercase/uppercase SHA-256 hex digest."""
+        if not isinstance(expected, str) or len(expected) != 64:
+            return False
+        try:
+            int(expected, 16)
+        except ValueError:
+            return False
+        return hmac.compare_digest(self.stdout_sha256, expected.lower())
 
 
 class ContainerRuntime(Protocol):
