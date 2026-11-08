@@ -11,6 +11,7 @@ from .github_oidc import (
     GitHubActionsJWKSProvider,
     GitHubActionsOIDCTokenProvider,
     GitHubActionsOIDCVerifier,
+    GitHubActionsOIDCIdentityProvider,
     GitHubOIDCPolicy,
     OIDCVerificationError,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "GitHubActionsJWKSProvider",
     "GitHubActionsOIDCTokenProvider",
     "GitHubActionsOIDCVerifier",
+    "GitHubActionsOIDCIdentityProvider",
     "GitHubOIDCPolicy",
     "OIDCVerificationError",
     "ContentAddressedArtifactStore",
