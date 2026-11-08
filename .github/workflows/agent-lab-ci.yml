@@ -9,11 +9,6 @@ on:
       - "catalog.json"
       - ".github/workflows/agent-lab-ci.yml"
   pull_request:
-    paths:
-      - "agent-lab/**"
-      - "tools/**"
-      - "catalog.json"
-      - ".github/workflows/agent-lab-ci.yml"
   workflow_dispatch:
 
 permissions:
