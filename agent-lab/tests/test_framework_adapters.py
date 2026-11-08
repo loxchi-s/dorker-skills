@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dorker_agent.capabilities import CapabilityPolicy
 from dorker_agent.framework_adapters import CrewAIAdapter, FrameworkExecutionError, LangChainAdapter
 from dorker_agent.tasks import TaskRequest
+from dorker_agent.execution import DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger
 
 TASK = TaskRequest("Fix parser", "Parser fails on empty input.", "bug")
 
@@ -96,6 +97,31 @@ class FrameworkAdapterTests(unittest.TestCase):
         policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
         with self.assertRaises(FrameworkExecutionError):
             LangChainAdapter(FakeRunnable(result=object()), policy=policy).run(TASK)
+
+    def test_ledger_tracks_adapter_success_and_blocks_replay(self):
+        policy = CapabilityPolicy(frozenset({CrewAIAdapter.CAPABILITY}))
+        ledger = InMemoryExecutionLedger()
+        crew = FakeCrew()
+        adapter = CrewAIAdapter(crew, policy=policy, ledger=ledger)
+        self.assertEqual(adapter.run(TASK, execution_id="issue-42"), "Crew plan")
+        self.assertEqual(ledger.get("issue-42").state, ExecutionState.SUCCEEDED)
+        with self.assertRaises(DuplicateExecutionError):
+            adapter.run(TASK, execution_id="issue-42")
+        self.assertEqual(crew.calls, 1)
+
+    def test_ledger_records_adapter_failure(self):
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        ledger = InMemoryExecutionLedger()
+        adapter = LangChainAdapter(FakeRunnable(error=ValueError()), policy=policy, ledger=ledger)
+        with self.assertRaises(FrameworkExecutionError):
+            adapter.run(TASK, execution_id="issue-43")
+        self.assertEqual(ledger.get("issue-43").state, ExecutionState.FAILED)
+
+    def test_ledger_and_id_must_be_paired(self):
+        policy = CapabilityPolicy(frozenset({CrewAIAdapter.CAPABILITY}))
+        adapter = CrewAIAdapter(FakeCrew(), policy=policy, ledger=InMemoryExecutionLedger())
+        with self.assertRaises(ValueError):
+            adapter.run(TASK)
 
     def test_framework_exception_is_wrapped(self):
         policy = CapabilityPolicy(frozenset({CrewAIAdapter.CAPABILITY}))
