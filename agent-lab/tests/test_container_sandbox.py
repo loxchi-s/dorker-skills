@@ -163,7 +163,7 @@ class DockerCLIArgvTests(unittest.TestCase):
                 config = ContainerSandboxConfig(
                     image=IMAGE, command=("id",),
                     allowed_mount_roots=(root,),
-                    mounts=(Mount(sock_path, "/control.sock"),),
+                    mounts=(Mount(sock_path, "/control.sock"),), allow_host_mounts=True,
                 )
                 with self.assertRaises(ValueError):
                     DockerCLIContainerRuntime().build_argv(config, "/tmp/cid")
