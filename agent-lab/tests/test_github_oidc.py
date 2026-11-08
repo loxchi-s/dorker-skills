@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import unittest
 from unittest.mock import patch
 
 from dorker_agent.artifacts import GitHubActorClaim, VerifiedGitHubActor
+_TEST_RSA_N = int(
+    "9de13f2b9d901fdf6af7d16b254303c65c2b8544f3bd26d3f0d1cb76469bf8ec5d143c85f6780bed18d2d0ec6b615d96550b2d62579b813a0f18d97be8d730af07273002745dc051fcf9433b3aca9389c4ef11ea82f6396238f26b34b3a39299a2fa4d674d146c2721d92ca73d44ebc444be71225d5d0cd1885b595458bdcd3fabfa19e29d177dfb8eb72fb5750c924938a99a71996bc5a6adfc28aa28316fc7e6d4d9c2f7aa3509c8b03adac670f9a6e1c8249cb85c1c62137dcb207ff3e674f2c4b73bd797c3b9462345223c25ff5aea1da95c6abcbf5550d41ecf9e17f84953588648cad06bafa21fc0ba29fc032372c407839b40f882844151e20a61c341",
+    16,
+)
+_TEST_RSA_D = int(
+    "837844905f5edb0bc319a6ac2095539964bb60f8f0373d14145fbf9c38643dbf262b69d2ec513f2d2b14b2a18d31c12b249a702a8a659610f0ed727dba8127ab38bbab410001e9dadc5bfd5e5f30bdf765a4e7386fe1f61b12ecdbd5411a1f440cf17e6f5d427a6583cc4360e8a671e6389095c95611dc50c7c9b9f3810a5cd52b8ebfcb79d3e536f3d1f45c0a7a90a0343dfe6e30062fa5b0996a462e06424cc303113491740fe09184d3a476fecf087e40d06d7adff037eb290fbd5a8ff0571de1ff0f86cc80ad136604dc164cf59e442fb3f831b765736c9094888392667de67a86e2e04ba25db0378ee76e9d2682ecdfd5842f0546bbb6f8e7a62e0b8419",
+    16,
+)
+_TEST_RSA_E = 65537
+_SHA256_DIGEST_INFO_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
+
+
 from dorker_agent.github_oidc import (
     GitHubActionsOIDCVerifier,
     GitHubOIDCPolicy,
@@ -34,7 +47,12 @@ def token_for(payload):
     header = {"alg": "RS256", "kid": "test-key", "typ": "JWT"}
     encoded_header = b64url(json.dumps(header, separators=(",", ":")).encode())
     encoded_payload = b64url(json.dumps(payload, separators=(",", ":")).encode())
-    signature = bytes(256)
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    digest_info = _SHA256_DIGEST_INFO_PREFIX + hashlib.sha256(signing_input).digest()
+    padding = b"\\xff" * (256 - len(digest_info) - 3)
+    encoded_message = b"\\x00\\x01" + padding + b"\\x00" + digest_info
+    signature_int = pow(int.from_bytes(encoded_message, "big"), _TEST_RSA_D, _TEST_RSA_N)
+    signature = signature_int.to_bytes(256, "big")
     return f"{encoded_header}.{encoded_payload}.{b64url(signature)}"
 
 
@@ -75,11 +93,10 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
         self.claim = GitHubActorClaim(101, "creator", token_for(claims()))
 
     def test_valid_signed_claim_policy_returns_canonical_actor(self):
-        with patch.object(GitHubActionsOIDCVerifier, "_verify_rs256"):
-            self.assertEqual(
-                self.verifier.verify(self.claim),
-                VerifiedGitHubActor(101, "creator"),
-            )
+        self.assertEqual(
+            self.verifier.verify(self.claim),
+            VerifiedGitHubActor(101, "creator"),
+        )
 
     def test_rejects_bad_signature(self):
         with self.assertRaisesRegex(OIDCVerificationError, "signature verification failed"):
