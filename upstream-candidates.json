@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "registry": "dorker-skills",
+  "status": "discovery_only",
+  "runtime_enabled": false,
+  "import_policy": "deny_until_reviewed_and_pinned",
+  "candidates": [
+    {
+      "repository": "agentskills/agentskills",
+      "url": "https://github.com/agentskills/agentskills",
+      "category": "specification",
+      "tags": [
+        "skill-format",
+        "interoperability"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "obra/superpowers",
+      "url": "https://github.com/obra/superpowers",
+      "category": "agent-workflow",
+      "tags": [
+        "brainstorming",
+        "tdd",
+        "debugging",
+        "planning",
+        "subagents",
+        "code-review"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "obra/superpowers-skills",
+      "url": "https://github.com/obra/superpowers-skills",
+      "category": "agent-workflow",
+      "tags": [
+        "community-skills",
+        "workflow-extensions"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "anthropics/skills",
+      "url": "https://github.com/anthropics/skills",
+      "category": "official-skills",
+      "tags": [
+        "document-processing",
+        "coding",
+        "workflow",
+        "skill-authoring"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "vercel-labs/agent-skills",
+      "url": "https://github.com/vercel-labs/agent-skills",
+      "category": "engineering",
+      "tags": [
+        "react",
+        "frontend",
+        "web-design",
+        "performance"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "trailofbits/skills",
+      "url": "https://github.com/trailofbits/skills",
+      "category": "security",
+      "tags": [
+        "security-audit",
+        "static-analysis",
+        "secure-development"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "github/awesome-copilot",
+      "url": "https://github.com/github/awesome-copilot",
+      "category": "agent-workflow",
+      "tags": [
+        "custom-agents",
+        "instructions",
+        "prompts",
+        "skills"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "supabase/agent-skills",
+      "url": "https://github.com/supabase/agent-skills",
+      "category": "engineering",
+      "tags": [
+        "supabase",
+        "postgresql",
+        "database"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "microsoft/skills",
+      "url": "https://github.com/microsoft/skills",
+      "category": "engineering",
+      "tags": [
+        "microsoft-ecosystem",
+        "developer-workflows"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "heilcheng/awesome-agent-skills",
+      "url": "https://github.com/heilcheng/awesome-agent-skills",
+      "category": "discovery-index",
+      "tags": [
+        "curated-index",
+        "multi-agent-skills"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    }
+  ]
+}
