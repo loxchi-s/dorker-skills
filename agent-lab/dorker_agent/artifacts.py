@@ -13,6 +13,7 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
+from typing import Protocol
 from pathlib import Path
 
 from .container_sandbox import ArtifactManifest
@@ -30,6 +31,26 @@ class ArtifactNotFoundError(ArtifactStoreError):
 
 class ArtifactIntegrityError(ArtifactStoreError):
     """Stored bytes do not match their content address."""
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubActorClaim:
+    github_id: int
+    login: str
+    oidc_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedGitHubActor:
+    github_id: int
+    login: str
+
+
+class GitHubIdentityVerifier(Protocol):
+    """Trusted host adapter that verifies a GitHub Actions OIDC token."""
+
+    def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor:
+        """Verify token signature/claims and return its canonical GitHub actor."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,7 +307,8 @@ class SQLiteArtifactIndex:
 
     def __init__(
         self, database: str | os.PathLike[str], blob_store: ContentAddressedArtifactStore,
-        *, max_records: int = 100_000, max_audit_records: int = 100_000, busy_timeout_ms: int = 5_000,
+        *, max_records: int = 100_000, max_audit_records: int = 100_000,
+        busy_timeout_ms: int = 5_000, identity_verifier: GitHubIdentityVerifier | None = None,
     ) -> None:
         if isinstance(max_records, bool) or not isinstance(max_records, int) or max_records < 1:
             raise ValueError("max_records must be a positive integer")
@@ -300,6 +322,7 @@ class SQLiteArtifactIndex:
         self._blob_store = blob_store
         self._max_records = max_records
         self._max_audit_records = max_audit_records
+        self._identity_verifier = identity_verifier
         self._busy_timeout_ms = busy_timeout_ms
         self._lock = threading.RLock()
         Path(self._database).parent.mkdir(parents=True, exist_ok=True)
@@ -504,11 +527,30 @@ class SQLiteArtifactIndex:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
-    def record_gc_plan(self, plan: ArtifactDeletionPlan, *, actor: str) -> str:
+    def _verified_actor(self, claim: GitHubActorClaim) -> VerifiedGitHubActor:
+        if self._identity_verifier is None:
+            raise RuntimeError("GitHub identity verification is not configured")
+        if not isinstance(claim, GitHubActorClaim):
+            raise TypeError("claim must be a GitHubActorClaim")
+        if isinstance(claim.github_id, bool) or not isinstance(claim.github_id, int) or claim.github_id < 1:
+            raise ValueError("github_id must be a positive integer")
+        if not isinstance(claim.login, str) or not claim.login.strip() or len(claim.login) > 39:
+            raise ValueError("login must be 1..39 non-whitespace characters")
+        if not isinstance(claim.oidc_token, str) or not claim.oidc_token or len(claim.oidc_token) > 16_384:
+            raise ValueError("OIDC token must be 1..16384 characters")
+        actor = self._identity_verifier.verify(claim)
+        if not isinstance(actor, VerifiedGitHubActor):
+            raise TypeError("identity verifier must return VerifiedGitHubActor")
+        if isinstance(actor.github_id, bool) or not isinstance(actor.github_id, int) or actor.github_id < 1:
+            raise ValueError("verified GitHub ID must be a positive integer")
+        if not isinstance(actor.login, str) or not actor.login.strip() or len(actor.login) > 39:
+            raise ValueError("verified GitHub login is invalid")
+        return actor
+
+    def record_gc_plan(self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim) -> str:
         if not isinstance(plan, ArtifactDeletionPlan):
             raise TypeError("plan must be an ArtifactDeletionPlan")
-        if not isinstance(actor, str) or not actor.strip() or len(actor) > 128:
-            raise ValueError("actor must be 1..128 non-whitespace characters")
+        actor = self._verified_actor(claim)
         details = {
             "candidate_count": len(plan.candidates),
             "total_bytes": plan.total_bytes,
@@ -517,33 +559,30 @@ class SQLiteArtifactIndex:
                 {"sha256": item.sha256, "size_bytes": item.size_bytes}
                 for item in plan.candidates
             ],
+            "github_actor_id": actor.github_id,
+            "github_login": actor.login,
         }
         return self._append_audit_event(
-            actor=actor, action="gc_plan_created",
+            actor=f"github:{actor.github_id}:{actor.login}",
+            action="gc_plan_created",
             approval_token=plan.approval_token, details=details,
         )
 
     def record_gc_approval(
-        self, approval_token: str, *, actor: str, approved: bool,
+        self, approval_token: str, *, claim: GitHubActorClaim, approved: bool,
     ) -> str:
         if not isinstance(approval_token, str) or not _DIGEST.fullmatch(approval_token):
             raise ValueError("approval_token must be a lowercase 64-character hex digest")
-        if not isinstance(actor, str) or not actor.strip() or len(actor) > 128:
-            raise ValueError("actor must be 1..128 non-whitespace characters")
         if not isinstance(approved, bool):
             raise TypeError("approved must be bool")
-        with self._lock, closing(self._connect()) as db:
-            exists = db.execute(
-                "SELECT 1 FROM artifact_audit_log WHERE action='gc_plan_created' AND approval_token=? LIMIT 1",
-                (approval_token,),
-            ).fetchone()
-        if exists is None:
-            raise ValueError("approval token has no recorded GC plan")
+        actor = self._verified_actor(claim)
         return self._append_audit_event(
-            actor=actor,
+            actor=f"github:{actor.github_id}:{actor.login}",
             action="gc_plan_approved" if approved else "gc_plan_rejected",
             approval_token=approval_token,
-            details={"approved": approved},
+            details={"approved": approved, "github_actor_id": actor.github_id,
+                     "github_login": actor.login},
+            require_distinct_approver=True,
         )
 
     def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]:
@@ -597,13 +636,28 @@ class SQLiteArtifactIndex:
 
     def _append_audit_event(
         self, *, actor: str, action: str, approval_token: str | None,
-        details: dict[str, object],
+        details: dict[str, object], require_distinct_approver: bool = False,
     ) -> str:
         details_json = json.dumps(details, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         if len(details_json.encode("utf-8")) > 64 * 1024:
             raise ValueError("audit event details exceed 64 KiB")
         with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            if require_distinct_approver:
+                plan_row = db.execute(
+                    "SELECT details_json FROM artifact_audit_log "
+                    "WHERE action='gc_plan_created' AND approval_token=? "
+                    "ORDER BY sequence DESC LIMIT 1",
+                    (approval_token,),
+                ).fetchone()
+                if plan_row is None:
+                    db.rollback()
+                    raise ValueError("approval token has no recorded GC plan")
+                creator_id = json.loads(plan_row["details_json"]).get("github_actor_id")
+                approver_id = details.get("github_actor_id")
+                if not isinstance(creator_id, int) or creator_id == approver_id:
+                    db.rollback()
+                    raise ValueError("GC plan approval requires a different GitHub actor")
             count = db.execute("SELECT COUNT(*) FROM artifact_audit_log").fetchone()[0]
             if count >= self._max_audit_records:
                 db.rollback()
