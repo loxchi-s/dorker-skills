@@ -14,7 +14,7 @@ These repositories are discovery sources, not blanket approvals. A repository be
 | Supabase agent skills | https://github.com/supabase/agent-skills | Supabase, PostgreSQL and data-layer engineering | Verify SQL impact, permissions and license |
 | Microsoft skills | https://github.com/microsoft/skills | Microsoft ecosystem and engineering workflows | Select relevant skills; verify license and provenance |
 | Awesome Agent Skills index | https://github.com/heilcheng/awesome-agent-skills | Discovery index for skills from multiple engineering teams | Index only; always review the original upstream source |
-| Skills directory | https://skills.sh/ | Popularity and discovery signals for published skills | Popularity is not a security or quality signal |
+| Skills directory | https://skills.sh/ | Popularity and discovery signals for published skills | Popularity is not a security or quality signal |\n| CrewAI | https://github.com/crewAIInc/crewAI | Multi-agent Crews and event-driven Flows | Review current API, tools, dependencies and license before adopting upstream code |\n| CrewAI Skills | https://github.com/crewAIInc/skills | Framework-specific agent development guidance | Review each skill and license; no verbatim import by default |\n| LangChain | https://github.com/langchain-ai/langchain | Model integrations, Runnables, retrieval and agent composition | Prefer current v1 APIs; inspect provider packages and license |
 
 ## Import policy
 
