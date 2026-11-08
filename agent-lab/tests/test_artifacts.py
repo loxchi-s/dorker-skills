@@ -13,6 +13,8 @@ from dorker_agent.artifacts import (
     ArtifactNotFoundError,
     ArtifactRetentionPolicy,
     ContentAddressedArtifactStore,
+    GitHubActorClaim,
+    VerifiedGitHubActor,
     SQLiteArtifactIndex,
 )
 
@@ -126,6 +128,18 @@ class ContentAddressedArtifactStoreTests(unittest.TestCase):
 
 
 
+class FakeGitHubIdentityVerifier:
+    def verify(self, claim):
+        expected = f"test-oidc:{claim.github_id}:{claim.login}"
+        if claim.oidc_token != expected:
+            raise ValueError("invalid test OIDC proof")
+        return VerifiedGitHubActor(claim.github_id, claim.login)
+
+
+def github_claim(actor_id, login):
+    return GitHubActorClaim(actor_id, login, f"test-oidc:{actor_id}:{login}")
+
+
 class SQLiteArtifactIndexTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -133,7 +147,10 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         os.mkdir(root)
         self.blobs = ContentAddressedArtifactStore(root, max_artifact_bytes=1024)
         self.db = os.path.join(self.temp.name, "index", "artifacts.sqlite3")
-        self.index = SQLiteArtifactIndex(self.db, self.blobs, max_records=10)
+        self.index = SQLiteArtifactIndex(
+            self.db, self.blobs, max_records=10,
+            identity_verifier=FakeGitHubIdentityVerifier(),
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -153,7 +170,9 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             b"persistent", name="persist.bin", media_type="application/octet-stream",
             source="test", execution_id="exec-43",
         )
-        reopened = SQLiteArtifactIndex(self.db, self.blobs)
+        reopened = SQLiteArtifactIndex(
+            self.db, self.blobs, identity_verifier=FakeGitHubIdentityVerifier(),
+        )
         self.assertEqual(reopened.get(artifact_id)[1], b"persistent")
 
     def test_same_manifest_registration_is_idempotent(self):
@@ -301,33 +320,44 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        created_hash = self.index.record_gc_plan(plan, actor="operator-A")
+        created_hash = self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
         approved_hash = self.index.record_gc_approval(
-            plan.approval_token, actor="operator-B", approved=True,
+            plan.approval_token, claim=github_claim(202, "approver"), approved=True,
         )
         events = self.index.list_audit_events()
         self.assertEqual([event["action"] for event in events], [
             "gc_plan_created", "gc_plan_approved",
         ])
-        self.assertEqual(events[0]["actor"], "operator-A")
-        self.assertEqual(events[1]["actor"], "operator-B")
+        self.assertEqual(events[0]["actor"], "github:101:creator")
+        self.assertEqual(events[1]["actor"], "github:202:approver")
         self.assertEqual(events[0]["event_hash"], created_hash)
         self.assertEqual(events[1]["event_hash"], approved_hash)
         self.assertTrue(self.index.verify_audit_log())
         self.assertTrue(self.blobs.contains(blob.sha256))
 
-    def test_gc_audit_rejects_approval_without_recorded_plan(self):
-        with self.assertRaisesRegex(ValueError, "no recorded GC plan"):
-            self.index.record_gc_approval("a" * 64, actor="operator", approved=True)
+    def test_gc_audit_requires_distinct_verified_github_actor(self):
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        with self.assertRaisesRegex(ValueError, "different GitHub actor"):
+            self.index.record_gc_approval(
+                plan.approval_token, claim=github_claim(101, "creator"), approved=True,
+            )
+        with self.assertRaisesRegex(ValueError, "invalid test OIDC proof"):
+            self.index.record_gc_approval(
+                plan.approval_token,
+                claim=GitHubActorClaim(202, "approver", "forged"),
+                approved=True,
+            )
+        self.assertEqual(len(self.index.list_audit_events()), 1)
 
-    def test_gc_audit_rejects_invalid_actor_and_approval_type(self):
-        with self.assertRaises(ValueError):
-            self.index.record_gc_approval("a" * 64, actor=" ", approved=True)
-        with self.assertRaises(TypeError):
-            self.index.record_gc_approval("a" * 64, actor="operator", approved=1)
-
-    def test_gc_audit_log_capacity_is_bounded(self):
-        index = SQLiteArtifactIndex(self.db, self.blobs, max_audit_records=1)
+    def test_gc_audit_fails_closed_without_identity_verifier(self):
+        index = SQLiteArtifactIndex(self.db, self.blobs)
         blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
         path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
         os.utime(path, ns=(1_000_000_000, 1_000_000_000))
@@ -335,9 +365,34 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        index.record_gc_plan(plan, actor="operator")
+        with self.assertRaisesRegex(RuntimeError, "not configured"):
+            index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+
+    def test_gc_audit_rejects_approval_without_recorded_plan(self):
+        with self.assertRaisesRegex(ValueError, "no recorded GC plan"):
+            self.index.record_gc_approval("a" * 64, claim=github_claim(101, "creator"), approved=True)
+
+    def test_gc_audit_rejects_invalid_actor_and_approval_type(self):
+        with self.assertRaises(ValueError):
+            self.index.record_gc_approval("a" * 64, claim=GitHubActorClaim(0, " ", "bad"), approved=True)
+        with self.assertRaises(TypeError):
+            self.index.record_gc_approval("a" * 64, claim=github_claim(101, "creator"), approved=1)
+
+    def test_gc_audit_log_capacity_is_bounded(self):
+        index = SQLiteArtifactIndex(
+            self.db, self.blobs, max_audit_records=1,
+            identity_verifier=FakeGitHubIdentityVerifier(),
+        )
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        index.record_gc_plan(plan, claim=github_claim(101, "creator"))
         with self.assertRaisesRegex(RuntimeError, "capacity"):
-            index.record_gc_approval(plan.approval_token, actor="operator", approved=False)
+            index.record_gc_approval(plan.approval_token, claim=github_claim(202, "approver"), approved=False)
 
     def test_gc_audit_hash_chain_detects_database_tampering(self):
         blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
@@ -347,7 +402,7 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        self.index.record_gc_plan(plan, actor="operator")
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
         self.assertTrue(self.index.verify_audit_log())
         with sqlite3.connect(self.db) as db:
             db.execute(
