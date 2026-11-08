@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import math
-import hmac
 import time
 import urllib.error
 import urllib.request
