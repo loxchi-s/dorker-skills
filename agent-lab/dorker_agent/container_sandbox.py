@@ -41,6 +41,10 @@ class ContainerOutputLimitError(ContainerSandboxError):
     """The runtime emitted output beyond the configured bound."""
 
 
+class ContainerArtifactIntegrityError(ContainerSandboxError):
+    """An artifact stream did not match its expected SHA-256 digest."""
+
+
 @dataclass(frozen=True, slots=True)
 class Mount:
     """Host-to-container mount; read-only unless explicitly opted in."""
@@ -68,6 +72,7 @@ class ContainerSandboxConfig:
     max_output_bytes: int = 256 * 1024
     input_payload: bytes = b""
     max_input_bytes: int = 1024 * 1024
+    expected_stdout_sha256: str | None = None
 
     @property
     def input_sha256(self) -> str:
@@ -92,6 +97,14 @@ class ContainerSandboxConfig:
             raise ValueError("input_payload must be bytes")
         if len(self.input_payload) > self.max_input_bytes:
             raise ValueError("input payload exceeds max_input_bytes")
+        if self.expected_stdout_sha256 is not None:
+            if (not isinstance(self.expected_stdout_sha256, str)
+                    or len(self.expected_stdout_sha256) != 64):
+                raise ValueError("expected_stdout_sha256 must be a 64-character hex digest")
+            try:
+                int(self.expected_stdout_sha256, 16)
+            except ValueError as exc:
+                raise ValueError("expected_stdout_sha256 must be a 64-character hex digest") from exc
         if self.user_uid == 0 or self.user_gid == 0:
             raise ValueError("container user must be non-root")
         if isinstance(self.cpu_limit, bool) or not isinstance(self.cpu_limit, (int, float)):
@@ -393,6 +406,9 @@ class ContainerSandboxRunner:
                 raise ContainerSandboxError("runtime exit code must be an integer")
             if control is not None:
                 control.check()
+            expected_digest = self._config.expected_stdout_sha256
+            if expected_digest is not None and not result.verify_stdout_sha256(expected_digest):
+                raise ContainerArtifactIntegrityError("stdout SHA-256 did not match expected digest")
             if result.exit_code != 0:
                 raise ContainerExitError(f"container exited with status {result.exit_code}")
             if ledger is not None:
