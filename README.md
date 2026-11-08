@@ -5,7 +5,7 @@ Private GitHub registry for Dorker. Skills are instructions and metadata, not ex
 ## Repository layout
 - `catalog.json`: machine-readable registry index (standard JSON; no YAML dependency).
 - `catalog.yaml`: human-readable legacy index; `catalog.json` is canonical for tools.
-- `skills/<name>/SKILL.md`: portable Agent Skill definitions.
+- `skills/<name>/SKILL.md`: portable Agent Skill definitions, including CrewAI and LangChain engineering guides.
 - `tools/validate_registry.py`: standard-library registry validator.
 - `tools/install_skill.py`: local copy installer with SHA-256 provenance.
 - `tools/skill_manager.py`: list, inspect, pin and verify skill provenance without executing content.
