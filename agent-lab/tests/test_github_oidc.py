@@ -137,7 +137,7 @@ class GitHubActionsOIDCTokenProviderTests(unittest.TestCase):
             provider.acquire()
 
     def test_rejects_insecure_or_malformed_endpoint(self):
-        for endpoint in ("http://example.test/token", "https://user:pass@example.test/token", "https://example.test/token#fragment"):
+        for endpoint in ("http://example.test/token", "https://attacker.test/token", "https://user:pass@pipelines.actions.githubusercontent.com/token", "https://pipelines.actions.githubusercontent.com:444/token", "https://pipelines.actions.githubusercontent.com/token#fragment", "https://pipelines.actions.githubusercontent.com:bad/token"):
             env = dict(self.environment, ACTIONS_ID_TOKEN_REQUEST_URL=endpoint)
             with self.subTest(endpoint=endpoint):
                 provider = GitHubActionsOIDCTokenProvider("aud", environ=env, opener=FakeHTTPOpener(None))
