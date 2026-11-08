@@ -205,6 +205,9 @@ class ContentAddressedArtifactStore:
                             continue
                         except ArtifactNotFoundError:
                             continue
+                        except OSError:
+                            corrupt.append(digest)
+                            continue
                         objects.append(ArtifactObjectInfo(digest, len(data)))
                 finally:
                     os.close(shard_fd)
