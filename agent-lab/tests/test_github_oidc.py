@@ -130,7 +130,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
 
     def test_rejects_weak_rsa_modulus(self):
         weak = dict(self.verifier._jwks.document["keys"][0])
-        weak["n"] = b64url(b"\\x7f" * 128)
+        weak["n"] = b64url(bytes([0x7f]) * 128)
         self.verifier._jwks.document = {"keys": [weak]}
         with self.assertRaisesRegex(OIDCVerificationError, "unsafe RSA"):
             self.verifier.verify(self.claim)
