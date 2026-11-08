@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dorker_agent.capabilities import CapabilityPolicy
 from dorker_agent.framework_adapters import CrewAIAdapter, FrameworkExecutionError, LangChainAdapter
 from dorker_agent.tasks import TaskRequest
-from dorker_agent.execution import DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger, SQLiteExecutionStore
+from dorker_agent.execution import (\n    DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger, SQLiteExecutionStore,\n    ExecutionControl, ExecutionCancelledError, ExecutionDeadlineExceeded,\n)
 
 TASK = TaskRequest("Fix parser", "Parser fails on empty input.", "bug")
 
@@ -44,6 +44,17 @@ class FakeRunnable:
         if self.error:
             raise self.error
         return self.result
+
+
+
+class ControlledRunnable:
+    def __init__(self, action):
+        self.action = action
+        self.calls = 0
+
+    def invoke_with_context(self, *, input, control):
+        self.calls += 1
+        return self.action(control)
 
 
 class FrameworkAdapterTests(unittest.TestCase):
@@ -139,6 +150,55 @@ class FrameworkAdapterTests(unittest.TestCase):
         with self.assertRaises(FrameworkExecutionError) as caught:
             CrewAIAdapter(FakeCrew(error=ValueError("internal")), policy=policy).run(TASK)
         self.assertIsInstance(caught.exception.__cause__, ValueError)
+
+
+    def test_pre_cancelled_control_prevents_framework_invocation(self):
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        runnable = ControlledRunnable(lambda control: "should not run")
+        control = ExecutionControl()
+        control.cancel()
+        with self.assertRaises(ExecutionCancelledError):
+            LangChainAdapter(runnable, policy=policy).run(TASK, control=control)
+        self.assertEqual(runnable.calls, 0)
+
+    def test_cooperative_cancellation_is_recorded_as_failure(self):
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        ledger = InMemoryExecutionLedger()
+        def cancel_during_call(control):
+            control.cancel()
+            control.check()
+        runnable = ControlledRunnable(cancel_during_call)
+        adapter = LangChainAdapter(runnable, policy=policy, ledger=ledger)
+        with self.assertRaises(ExecutionCancelledError):
+            adapter.run(TASK, execution_id="cancelled-job", control=ExecutionControl())
+        self.assertEqual(ledger.get("cancelled-job").state, ExecutionState.FAILED)
+        self.assertEqual(ledger.get("cancelled-job").error_type, "ExecutionCancelledError")
+
+    def test_deadline_expiry_is_recorded_as_failure(self):
+        import time
+
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        ledger = InMemoryExecutionLedger()
+        def exceed_deadline(control):
+            time.sleep(0.02)
+            control.check()
+        adapter = LangChainAdapter(
+            ControlledRunnable(exceed_deadline), policy=policy, ledger=ledger
+        )
+        with self.assertRaises(ExecutionDeadlineExceeded):
+            adapter.run(
+                TASK, execution_id="timeout-job",
+                control=ExecutionControl(timeout_seconds=0.005),
+            )
+        self.assertEqual(ledger.get("timeout-job").state, ExecutionState.FAILED)
+        self.assertEqual(ledger.get("timeout-job").error_type, "ExecutionDeadlineExceeded")
+
+    def test_control_requires_context_aware_framework_port(self):
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        with self.assertRaises(FrameworkExecutionError):
+            LangChainAdapter(FakeRunnable(), policy=policy).run(
+                TASK, control=ExecutionControl()
+            )
 
 
 if __name__ == "__main__":
