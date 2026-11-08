@@ -122,6 +122,24 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
             with self.assertRaisesRegex(OIDCVerificationError, "missing or ambiguous"):
                 self.verifier.verify(self.claim)
 
+    def test_rejects_non_finite_time_claims(self):
+        claim = GitHubActorClaim(101, "creator", token_for(claims(exp=float("nan"))))
+        with patch.object(GitHubActionsOIDCVerifier, "_verify_rs256"):
+            with self.assertRaisesRegex(OIDCVerificationError, "invalid exp"):
+                self.verifier.verify(claim)
+
+    def test_rejects_weak_rsa_modulus(self):
+        weak = dict(self.verifier._jwks.document["keys"][0])
+        weak["n"] = b64url(b"\\x7f" * 128)
+        self.verifier._jwks.document = {"keys": [weak]}
+        with self.assertRaisesRegex(OIDCVerificationError, "unsafe RSA"):
+            self.verifier.verify(self.claim)
+
+    def test_rejects_oversized_jwks_key_set(self):
+        self.verifier._jwks.document = {"keys": [{}] * 33}
+        with self.assertRaisesRegex(OIDCVerificationError, "missing or ambiguous"):
+            self.verifier.verify(self.claim)
+
     def test_policy_rejects_wildcard_or_empty_workflow_allowlist(self):
         with self.assertRaises(ValueError):
             GitHubOIDCPolicy("aud", "owner/repo", 1, ())
