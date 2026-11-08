@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -291,6 +292,69 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
     def test_gc_dry_run_rejects_invalid_scan_limit(self):
         with self.assertRaises(ValueError):
             self.index.dry_run_gc(max_scan_objects=0)
+
+    def test_gc_audit_records_plan_and_approval_with_valid_hash_chain(self):
+        blob = self.blobs.put(b"old-orphan", name="old", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        created_hash = self.index.record_gc_plan(plan, actor="operator-A")
+        approved_hash = self.index.record_gc_approval(
+            plan.approval_token, actor="operator-B", approved=True,
+        )
+        events = self.index.list_audit_events()
+        self.assertEqual([event["action"] for event in events], [
+            "gc_plan_created", "gc_plan_approved",
+        ])
+        self.assertEqual(events[0]["actor"], "operator-A")
+        self.assertEqual(events[1]["actor"], "operator-B")
+        self.assertEqual(events[0]["event_hash"], created_hash)
+        self.assertEqual(events[1]["event_hash"], approved_hash)
+        self.assertTrue(self.index.verify_audit_log())
+        self.assertTrue(self.blobs.contains(blob.sha256))
+
+    def test_gc_audit_rejects_approval_without_recorded_plan(self):
+        with self.assertRaisesRegex(ValueError, "no recorded GC plan"):
+            self.index.record_gc_approval("a" * 64, actor="operator", approved=True)
+
+    def test_gc_audit_rejects_invalid_actor_and_approval_type(self):
+        with self.assertRaises(ValueError):
+            self.index.record_gc_approval("a" * 64, actor=" ", approved=True)
+        with self.assertRaises(TypeError):
+            self.index.record_gc_approval("a" * 64, actor="operator", approved=1)
+
+    def test_gc_audit_log_capacity_is_bounded(self):
+        index = SQLiteArtifactIndex(self.db, self.blobs, max_audit_records=1)
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        index.record_gc_plan(plan, actor="operator")
+        with self.assertRaisesRegex(RuntimeError, "capacity"):
+            index.record_gc_approval(plan.approval_token, actor="operator", approved=False)
+
+    def test_gc_audit_hash_chain_detects_database_tampering(self):
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        self.index.record_gc_plan(plan, actor="operator")
+        self.assertTrue(self.index.verify_audit_log())
+        with sqlite3.connect(self.db) as db:
+            db.execute(
+                "UPDATE artifact_audit_log SET actor=? WHERE sequence=1",
+                ("tampered",),
+            )
+        self.assertFalse(self.index.verify_audit_log())
 
     def test_index_detects_missing_blob(self):
         artifact_id = self.index.put(
