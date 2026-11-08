@@ -36,7 +36,9 @@ def _task_input(task: TaskRequest) -> dict[str, str]:
 
 
 def _response_text(result: object, *, attribute: str | None = None) -> str:
-    candidate = getattr(result, attribute, None) if attribute else result
+    candidate = result if isinstance(result, str) else (
+        getattr(result, attribute, None) if attribute else result
+    )
     if not isinstance(candidate, str) or not candidate.strip():
         raise FrameworkExecutionError("framework returned an empty or unsupported response")
     return candidate.strip()
@@ -61,9 +63,11 @@ class CrewAIAdapter:
         self._policy.require(self.CAPABILITY)
         try:
             result = self._crew.kickoff(inputs=payload)
+            return _response_text(result, attribute="raw")
+        except FrameworkExecutionError:
+            raise
         except Exception as exc:
             raise FrameworkExecutionError("CrewAI execution failed") from exc
-        return _response_text(result, attribute="raw")
 
 
 class LangChainAdapter:
@@ -85,6 +89,8 @@ class LangChainAdapter:
         self._policy.require(self.CAPABILITY)
         try:
             result = self._runnable.invoke(payload)
+            return _response_text(result, attribute="content")
+        except FrameworkExecutionError:
+            raise
         except Exception as exc:
             raise FrameworkExecutionError("LangChain execution failed") from exc
-        return _response_text(result, attribute="content")
