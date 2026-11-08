@@ -7,9 +7,11 @@ from __future__ import annotations
 import json
 import math
 import multiprocessing
+import os
+import signal
 import time
+from dataclasses import dataclass
 from multiprocessing.connection import Connection
-from threading import Event
 from typing import Any, Callable, Mapping
 
 from .execution import (
@@ -48,6 +50,41 @@ class WorkerOutputLimitError(WorkerError):
     """The handler response exceeded the configured output limit."""
 
 
+@dataclass(frozen=True)
+class ResourceLimits:
+    """Optional POSIX rlimits applied before handler code starts."""
+
+    cpu_seconds: int | None = None
+    address_space_bytes: int | None = None
+    open_files: int | None = None
+    file_size_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in vars(self).items():
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                raise ValueError(f"{name} must be a positive integer or None")
+
+
+def _apply_resource_limits(limits: ResourceLimits | None) -> None:
+    if limits is None:
+        return
+    if os.name != "posix":
+        raise RuntimeError("POSIX resource limits are unavailable on this platform")
+    import resource
+
+    for field, resource_id in (
+        ("cpu_seconds", resource.RLIMIT_CPU),
+        ("address_space_bytes", resource.RLIMIT_AS),
+        ("open_files", resource.RLIMIT_NOFILE),
+        ("file_size_bytes", resource.RLIMIT_FSIZE),
+    ):
+        value = getattr(limits, field)
+        if value is not None:
+            resource.setrlimit(resource_id, (value, value))
+
+
 class WorkerContext:
     """Cooperative context exposed to an isolated handler."""
 
@@ -73,8 +110,14 @@ def _worker_entry(
     cancel_event: Any,
     deadline: float | None,
     max_output_bytes: int,
+    limits: ResourceLimits | None,
+    group_ready: Any,
 ) -> None:
     try:
+        if os.name == "posix":
+            os.setsid()
+        _apply_resource_limits(limits)
+        group_ready.set()
         context = WorkerContext(cancel_event, deadline)
         context.check()
         result = handler(context, payload)
@@ -100,6 +143,7 @@ def _worker_entry(
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
+        group_ready.set()
         send_conn.close()
 
 
@@ -118,6 +162,7 @@ class IsolatedWorkerRunner:
         max_output_bytes: int = 256 * 1024,
         poll_interval_seconds: float = 0.025,
         terminate_grace_seconds: float = 0.25,
+        resource_limits: ResourceLimits | None = None,
     ) -> None:
         if not isinstance(handlers, Mapping) or not handlers:
             raise ValueError("an explicit non-empty handler allowlist is required")
@@ -150,7 +195,12 @@ class IsolatedWorkerRunner:
         self._max_payload_bytes = max_payload_bytes
         self._max_output_bytes = max_output_bytes
         self._poll_interval = float(poll_interval_seconds)
+        if resource_limits is not None and not isinstance(resource_limits, ResourceLimits):
+            raise TypeError("resource_limits must be ResourceLimits or None")
+        if resource_limits is not None and os.name != "posix":
+            raise ValueError("resource_limits require a POSIX platform")
         self._terminate_grace = float(terminate_grace_seconds)
+        self._resource_limits = resource_limits
 
     def run(
         self,
@@ -189,12 +239,14 @@ class IsolatedWorkerRunner:
 
         ctx = multiprocessing.get_context("spawn")
         cancel_event = ctx.Event()
+        group_ready = ctx.Event()
         recv_conn, send_conn = ctx.Pipe(duplex=False)
         process = ctx.Process(
             target=_worker_entry,
             args=(
                 send_conn, self._handlers[handler_id], dict(payload),
                 cancel_event, deadline, self._max_output_bytes,
+                self._resource_limits, group_ready,
             ),
             daemon=True,
         )
@@ -203,7 +255,11 @@ class IsolatedWorkerRunner:
         try:
             process.start()
             send_conn.close()
-            while True:
+            while not group_ready.wait(self._poll_interval):
+                if time.monotonic() >= deadline:
+                    failure = WorkerTimeoutError("worker startup deadline exceeded")
+                    break
+            while failure is None:
                 if control is not None and control.cancelled:
                     cancel_event.set()
                     failure = WorkerCancelledError("worker cancelled")
@@ -245,16 +301,26 @@ class IsolatedWorkerRunner:
         except Exception as exc:
             failure = exc
         finally:
-            if process.pid is not None and process.is_alive():
+            if process.pid is not None:
                 if failure is not None:
                     cancel_event.set()
                 process.join(self._terminate_grace)
-                if process.is_alive():
+                if os.name == "posix" and group_ready.is_set():
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    process.join(self._terminate_grace)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                elif process.is_alive():
                     process.terminate()
                     process.join(self._terminate_grace)
-                if process.is_alive() and hasattr(process, "kill"):
-                    process.kill()
-                    process.join(self._terminate_grace)
+                    if process.is_alive() and hasattr(process, "kill"):
+                        process.kill()
+                        process.join(self._terminate_grace)
             if process.pid is not None and process.is_alive():
                 failure = WorkerCrashedError("worker could not be reaped")
             recv_conn.close()
