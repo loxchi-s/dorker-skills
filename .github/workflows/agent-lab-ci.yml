@@ -26,7 +26,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,3 +40,11 @@ jobs:
         run: python -m unittest discover -s agent-lab/tests -v
       - name: Compile agent lab
         run: python -m compileall -q agent-lab
+      - name: Prepare local image for Docker integration tests
+        run: |
+          docker info
+          docker pull python:3.12-slim
+          IMAGE_ID="$(docker image inspect python:3.12-slim --format '{{.Id}}')"
+          echo "DORKER_TEST_IMAGE=$IMAGE_ID" >> "$GITHUB_ENV"
+      - name: Run real Docker daemon integration tests
+        run: python -m unittest discover -s agent-lab/tests -p 'test_docker_integration.py' -v
