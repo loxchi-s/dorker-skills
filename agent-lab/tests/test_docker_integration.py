@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dorker_agent.container_sandbox import ContainerOutputLimitError, ContainerSandboxConfig, DockerCLIContainerRuntime
+from dorker_agent.container_sandbox import ContainerOutputLimitError, ContainerSandboxConfig, DockerCLIContainerRuntime, Mount
 from dorker_agent.execution import ExecutionDeadlineExceeded
 
 IMAGE = os.environ.get("DORKER_TEST_IMAGE")
@@ -53,6 +53,33 @@ print("docker-isolation-probe: PASS")
         )
         result = RUNTIME.run_container(config, timeout_seconds=15, control=None)
         self.assertIn(b"docker-isolation-probe: PASS", result.stdout)
+
+    def test_read_only_host_mount_and_no_docker_socket(self):
+        with __import__("tempfile").TemporaryDirectory() as host_dir:
+            fixture = Path(host_dir) / "fixture.txt"
+            fixture.write_text("host-data")
+            probe = r"""
+from pathlib import Path
+assert Path("/input/fixture.txt").read_text() == "host-data"
+try:
+    Path("/input/attack.txt").write_text("must-not-reach-host")
+except OSError:
+    pass
+else:
+    raise AssertionError("read-only host mount accepted a write")
+assert not Path("/var/run/docker.sock").exists()
+assert not Path("/run/docker.sock").exists()
+print("mount-boundary-probe: PASS")
+"""
+            config = ContainerSandboxConfig(
+                image=IMAGE, command=("python", "-I", "-c", probe),
+                allowed_mount_roots=(host_dir,),
+                mounts=(Mount(host_dir, "/input", read_only=True),),
+                max_output_bytes=4096,
+            )
+            result = RUNTIME.run_container(config, timeout_seconds=15, control=None)
+            self.assertIn(b"mount-boundary-probe: PASS", result.stdout)
+            self.assertFalse((Path(host_dir) / "attack.txt").exists())
 
     def test_timeout_stops_long_running_container(self):
         config = ContainerSandboxConfig(
