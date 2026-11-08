@@ -76,7 +76,7 @@ class ExecutionLedgerTests(unittest.TestCase):
             control.check()
 
     def test_control_rejects_invalid_timeout(self):
-        for value in (0, -1, True, "1"):
+        for value in (0, -1, True, "1", float("nan"), float("inf")):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 ExecutionControl(timeout_seconds=value)
 
