@@ -3,11 +3,6 @@ name: Dorker Agent Lab CI
 on:
   push:
     branches: [main]
-    paths:
-      - "agent-lab/**"
-      - "tools/**"
-      - "catalog.json"
-      - ".github/workflows/agent-lab-ci.yml"
   pull_request:
   workflow_dispatch:
 
