@@ -124,6 +124,8 @@ class GitHubActionsOIDCVerifier:
         keys = jwks.get("keys")
         if not isinstance(keys, list):
             raise OIDCVerificationError("JWKS keys list is missing")
+        if not 1 <= len(keys) <= 32:
+            raise OIDCVerificationError("JWKS key count exceeds bounds")
         matching = [
             key for key in keys
             if isinstance(key, dict)
