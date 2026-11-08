@@ -7,6 +7,12 @@ from .framework_adapters import (
     LangChainAdapter,
 )
 from .tasks import TaskRequest
+from .github_oidc import (
+    GitHubActionsJWKSProvider,
+    GitHubActionsOIDCVerifier,
+    GitHubOIDCPolicy,
+    OIDCVerificationError,
+)
 
 from .artifacts import (
     ArtifactIntegrityError,
@@ -43,6 +49,10 @@ __all__ = [
     "ChatModel",
     "ModelMessage",
     "TaskRequest",
+    "GitHubActionsJWKSProvider",
+    "GitHubActionsOIDCVerifier",
+    "GitHubOIDCPolicy",
+    "OIDCVerificationError",
     "ContentAddressedArtifactStore",
     "SQLiteArtifactIndex",
     "ArtifactStoreError",
