@@ -37,20 +37,21 @@ repository ID checks enabled.
 
 ## Required GitHub repository configuration
 
-1. Create the `artifact-gc` environment.
-2. Require at least one designated reviewer; prevent self-review where the GitHub plan/settings support it.
-3. Restrict deployments to the protected `main` branch.
-4. Protect `main` with required review and status checks. Require CODEOWNERS review for the workflow,
-   OIDC verifier/policy, and artifact audit code.
-5. Restrict who may run workflow dispatch. Review organization/repository Actions permissions.
-6. Pin every third-party action to a reviewed full commit SHA before implementation.
-7. Keep secrets out of workflow inputs, artifacts, logs, and prompts.
+1. Keep the repository private.
+2. Configure branch protection or a ruleset for `main`:
+   - Require a pull request before merging.
+   - Require at least one approval.
+   - Dismiss stale approvals when new commits are pushed.
+   - Require approval of the latest reviewable push where available.
+   - Require the Agent Lab CI status check.
+   - Require CODEOWNERS review for protected paths.
+   - Restrict direct pushes and force pushes.
+3. Add at least one independent trusted maintainer to `.github/CODEOWNERS` if the repository owner is also the PR author; an author cannot approve their own PR.
+4. The `artifact-gc` Environment may remain present, but do not rely on Environment Required reviewers on this private GitHub Pro repository.
+5. Restrict who may run Actions and keep secrets out of workflow inputs, artifacts, logs, and prompts.
+6. Pin every third-party action to a reviewed full commit SHA before implementing a privileged workflow.
 
-Environment approval is an additional deployment gate; it is **not** proof of the reviewer's identity in the
-OIDC `actor` claim. The JWT actor identifies the workflow run initiator. Therefore the GC plan creator and
-the approval workflow dispatcher must be different immutable GitHub actor IDs. The index enforces this
-distinction. A second environment reviewer provides a separate GitHub-side gate, not a replacement for
-the distinct-dispatcher check.
+The current `.github/CODEOWNERS` assigns security-sensitive paths to `@loxchi-s`. This file declares review ownership but does not enforce approval by itself; branch protection/rulesets must be configured in GitHub settings. A second independent maintainer must be added before relying on code-owner review when `loxchi-s` authors the PR.
 
 ## Workflow contract (not yet enabled)
 
