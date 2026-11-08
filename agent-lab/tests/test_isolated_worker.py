@@ -117,6 +117,37 @@ class IsolatedWorkerTests(unittest.TestCase):
             runner.run("fail", {}, timeout_seconds=5)
         self.assertNotIn("sensitive detail", str(caught.exception))
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process groups required")
+    def test_worker_process_group_stops_descendants(self):
+        runner = self._runner(terminate_grace_seconds=0.1)
+        result = runner.run("child", {}, timeout_seconds=5)
+        self.assertNotEqual(result["group"], os.getpgrp())
+        pid = result["pid"]
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                with open("/proc/" + str(pid) + "/stat", encoding="utf-8") as stat_file:
+                    state = stat_file.read().split()[2]
+                if state == "Z":
+                    break
+            except FileNotFoundError:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("worker descendant remained running")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX resource limits required")
+    def test_posix_resource_limit_is_applied_before_handler(self):
+        runner = self._runner(resource_limits=ResourceLimits(open_files=32))
+        result = runner.run("limits", {}, timeout_seconds=5)
+        self.assertEqual(result["nofile"], 32)
+
+    def test_resource_limit_values_must_be_positive_integers(self):
+        for value in (0, -1, True, 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    ResourceLimits(open_files=value)
+
     def test_unknown_handler_rejected_before_start(self):
         runner = self._runner()
         with self.assertRaises(ValueError):
