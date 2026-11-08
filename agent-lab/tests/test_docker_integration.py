@@ -84,6 +84,17 @@ print("mount-boundary-probe: PASS")
             self.assertIn(b"mount-boundary-probe: PASS", result.stdout)
             self.assertFalse((Path(host_dir) / "attack.txt").exists())
 
+    def test_bounded_artifact_transfer_over_stdin(self):
+        config = ContainerSandboxConfig(
+            image=IMAGE, command=("python", "-I", "-c",
+                "import sys; data=sys.stdin.buffer.read(); "
+                "assert data == b'artifact\\x00payload'; print(len(data))"),
+            input_payload=b"artifact\\x00payload", max_input_bytes=64,
+            max_output_bytes=1024,
+        )
+        result = RUNTIME.run_container(config, timeout_seconds=10, control=None)
+        self.assertIn(b"15", result.stdout)
+
     def test_timeout_stops_long_running_container(self):
         config = ContainerSandboxConfig(
             image=IMAGE, command=("python", "-I", "-c", "import time; time.sleep(30)"),
