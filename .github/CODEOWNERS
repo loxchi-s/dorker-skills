@@ -1,20 +1,8 @@
-# Repository owner reviews JavaScript files.
-*.js                                      @loxchi-s
-
-# Repository owner reviews the go-api directory.
-/go-api/                                  @loxchi-s
-
-# Repository owner reviews Terraform files.
-*.tf                                      @loxchi-s
-
-# Repository owner reviews documentation.
-/docs/                                    @loxchi-s
-
 # Security-sensitive paths require review from the repository owner.
-/.github/CODEOWNERS                       @loxchi-s
-/.github/workflows/                       @loxchi-s
-/agent-lab/PROTECTED_OIDC_WORKFLOW.md     @loxchi-s
-/agent-lab/dorker_agent/github_oidc.py    @loxchi-s
-/agent-lab/dorker_agent/artifacts.py      @loxchi-s
-/agent-lab/tests/test_github_oidc.py      @loxchi-s
-/agent-lab/tests/test_artifacts.py        @loxchi-s
+/.github/CODEOWNERS                         @loxchi-s
+/.github/workflows/                         @loxchi-s
+/agent-lab/PROTECTED_OIDC_WORKFLOW.md       @loxchi-s
+/agent-lab/dorker_agent/github_oidc.py      @loxchi-s
+/agent-lab/dorker_agent/artifacts.py        @loxchi-s
+/agent-lab/tests/test_github_oidc.py        @loxchi-s
+/agent-lab/tests/test_artifacts.py          @loxchi-s
