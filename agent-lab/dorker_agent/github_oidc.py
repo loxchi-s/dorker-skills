@@ -136,7 +136,7 @@ class GitHubActionsOIDCTokenProvider:
             or len(endpoint) > 4096
         ):
             raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint")
-        if len(bearer) > 16 * 1024 or any(char in bearer for char in "\\r\\n"):
+        if len(bearer) > 16 * 1024 or any(char in bearer for char in "\r\n"):
             raise OIDCVerificationError("invalid GitHub Actions OIDC request credential")
         query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=False)
         if any(key == "audience" for key, _ in query):
