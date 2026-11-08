@@ -283,6 +283,48 @@ class GitHubActionsOIDCVerifier:
             raise OIDCVerificationError("invalid RSA public key") from exc
 
 
+
+class GitHubActionsOIDCIdentityProvider:
+    """Compose runner token acquisition with signature-verified actor identity.
+
+    The actor fields are parsed from the untrusted JWT payload only to construct
+    a claim; the injected verifier must validate the signature and signed fields.
+    """
+
+    def __init__(self, token_provider: GitHubActionsOIDCTokenProvider,
+                 verifier: GitHubActionsOIDCVerifier) -> None:
+        if not callable(getattr(token_provider, "acquire", None)):
+            raise TypeError("token_provider must expose acquire()")
+        if not callable(getattr(verifier, "verify", None)):
+            raise TypeError("verifier must expose verify()")
+        self._token_provider = token_provider
+        self._verifier = verifier
+
+    def acquire_claim(self) -> GitHubActorClaim:
+        token = self._token_provider.acquire()
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise OIDCVerificationError("malformed JWT from token provider")
+        payload = _decode_segment(parts[1])
+        if not isinstance(payload, dict):
+            raise OIDCVerificationError("JWT payload must be an object")
+        actor_id = payload.get("actor_id")
+        actor = payload.get("actor")
+        if isinstance(actor_id, bool) or not (
+            isinstance(actor_id, int) or isinstance(actor_id, str) and actor_id.isdecimal()
+        ):
+            raise OIDCVerificationError("JWT actor ID is missing or invalid")
+        try:
+            numeric_id = int(actor_id)
+        except (TypeError, ValueError) as exc:
+            raise OIDCVerificationError("JWT actor ID is missing or invalid") from exc
+        if numeric_id < 1 or not isinstance(actor, str) or not actor.strip() or len(actor) > 39:
+            raise OIDCVerificationError("JWT actor identity is missing or invalid")
+        return GitHubActorClaim(numeric_id, actor, token)
+
+    def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor:
+        return self._verifier.verify(claim)
+
 def _decode_segment(value: str) -> object:
     try:
         raw = _decode_bytes(value)
