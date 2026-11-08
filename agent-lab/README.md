@@ -20,7 +20,7 @@ The base agent accepts a task and an injected model adapter. It exposes no shell
 ## Framework adapters
 - `CrewAIAdapter` accepts an injected object exposing `kickoff(inputs=...)`.
 - `LangChainAdapter` accepts an injected Runnable exposing `invoke(input)`.
-- Both adapters are synchronous, accept only `TaskRequest`, normalize only plain-text responses (CrewAI `raw` or LangChain `content`), and wrap framework exceptions.
+- Both adapters are synchronous, accept only `TaskRequest`, normalize plain-string responses or framework text fields (CrewAI `raw` / LangChain `content`), and wrap framework exceptions.
 - Each adapter requires its own explicit capability: `framework:crewai` or `framework:langchain`. The default policy denies both.
 - Framework packages are not imported or installed by Agent Lab. The caller is responsible for constructing and configuring the injected object.
 - Framework-native tools are not granted by these adapters. Do not pass a preconfigured crew/runnable with tools or external side effects unless separately reviewed and explicitly authorized.
