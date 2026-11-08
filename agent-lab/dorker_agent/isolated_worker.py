@@ -315,6 +315,12 @@ class IsolatedWorkerRunner:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(self._terminate_grace)
+                        if process.is_alive() and hasattr(process, "kill"):
+                            process.kill()
+                            process.join(self._terminate_grace)
                 elif process.is_alive():
                     process.terminate()
                     process.join(self._terminate_grace)
