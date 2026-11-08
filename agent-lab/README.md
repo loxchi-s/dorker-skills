@@ -31,6 +31,7 @@ These adapters do not implement timeout enforcement, asynchronous cancellation, 
 
 ## Status
 - Implemented: synchronous injected ports, explicit capability gates, task mapping, response validation, exception wrapping, and fake-port unit tests.
-- Implemented: process-local ledger plus durable SQLite store, transactional single-use execution IDs, bounded record/result sizes, interrupted-run marking, and adapter integration.
+- Implemented: process-local ledger plus durable SQLite store, transactional single-use execution IDs, bounded record/result sizes, interrupted-run marking, deterministic connection closing, and adapter integration.
+- Implemented: multiprocessing tests for same-ID contention, concurrent distinct jobs, and abrupt worker termination followed by controlled recovery.
 - Not implemented: live framework integrations, dependency installation, tool execution, timeout/cancellation, automatic retry/replay, distributed idempotency, multi-host coordination, retention/compaction, or sandbox integration.
-- Validation: pending GitHub Actions for this change.
+- Validation: GitHub Actions pending for the multiprocess test additions. Passing CI will establish test-suite success only; it does not establish multi-host or distributed exactly-once guarantees.
