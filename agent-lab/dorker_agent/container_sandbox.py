@@ -172,6 +172,10 @@ class ArtifactManifest:
                 raise ValueError(f"{field_name} must be a non-empty string up to 256 characters")
             if any(ord(char) < 32 for char in value):
                 raise ValueError(f"{field_name} must not contain control characters")
+            if field_name == "name" and (
+                value in {".", ".."} or "/" in value or "\\" in value
+            ):
+                raise ValueError("name must be a plain filename, not a path")
         if isinstance(self.size_bytes, bool) or not isinstance(self.size_bytes, int) or self.size_bytes < 0:
             raise ValueError("size_bytes must be a non-negative integer")
         if (not isinstance(self.sha256, str) or len(self.sha256) != 64):
