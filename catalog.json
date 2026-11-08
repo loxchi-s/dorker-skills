@@ -7,16 +7,76 @@
   "default_capabilities": [],
   "skills": [
     {
-      "name": "shell-executor",
-      "category": "core",
+      "name": "agent-evaluator",
+      "category": "advanced",
       "status": "draft",
-      "path": "skills/shell-executor/SKILL.md"
+      "path": "skills/agent-evaluator/SKILL.md"
     },
     {
-      "name": "python-executor",
+      "name": "brainstorming",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/brainstorming/SKILL.md"
+    },
+    {
+      "name": "code-reviewer",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/code-reviewer/SKILL.md"
+    },
+    {
+      "name": "mcts-planner",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/mcts-planner/SKILL.md"
+    },
+    {
+      "name": "sandbox-monitor",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/sandbox-monitor/SKILL.md"
+    },
+    {
+      "name": "skill-registry",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/skill-registry/SKILL.md"
+    },
+    {
+      "name": "web-research",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/web-research/SKILL.md"
+    },
+    {
+      "name": "workflow-orchestrator",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/workflow-orchestrator/SKILL.md"
+    },
+    {
+      "name": "writing-plans",
+      "category": "advanced",
+      "status": "draft",
+      "path": "skills/writing-plans/SKILL.md"
+    },
+    {
+      "name": "code-analyzer",
       "category": "core",
       "status": "draft",
-      "path": "skills/python-executor/SKILL.md"
+      "path": "skills/code-analyzer/SKILL.md"
+    },
+    {
+      "name": "error-recovery",
+      "category": "core",
+      "status": "draft",
+      "path": "skills/error-recovery/SKILL.md"
+    },
+    {
+      "name": "file-manager",
+      "category": "core",
+      "status": "draft",
+      "path": "skills/file-manager/SKILL.md"
     },
     {
       "name": "git-manager",
@@ -31,16 +91,16 @@
       "path": "skills/github-manager/SKILL.md"
     },
     {
-      "name": "file-manager",
+      "name": "python-executor",
       "category": "core",
       "status": "draft",
-      "path": "skills/file-manager/SKILL.md"
+      "path": "skills/python-executor/SKILL.md"
     },
     {
-      "name": "code-analyzer",
+      "name": "shell-executor",
       "category": "core",
       "status": "draft",
-      "path": "skills/code-analyzer/SKILL.md"
+      "path": "skills/shell-executor/SKILL.md"
     },
     {
       "name": "test-runner",
@@ -49,34 +109,10 @@
       "path": "skills/test-runner/SKILL.md"
     },
     {
-      "name": "error-recovery",
+      "name": "verification-before-completion",
       "category": "core",
       "status": "draft",
-      "path": "skills/error-recovery/SKILL.md"
-    },
-    {
-      "name": "rust-engineering",
-      "category": "engineering",
-      "status": "draft",
-      "path": "skills/rust-engineering/SKILL.md"
-    },
-    {
-      "name": "python-engineering",
-      "category": "engineering",
-      "status": "draft",
-      "path": "skills/python-engineering/SKILL.md"
-    },
-    {
-      "name": "typescript-engineering",
-      "category": "engineering",
-      "status": "draft",
-      "path": "skills/typescript-engineering/SKILL.md"
-    },
-    {
-      "name": "docker-manager",
-      "category": "engineering",
-      "status": "draft",
-      "path": "skills/docker-manager/SKILL.md"
+      "path": "skills/verification-before-completion/SKILL.md"
     },
     {
       "name": "api-builder",
@@ -91,10 +127,10 @@
       "path": "skills/database-manager/SKILL.md"
     },
     {
-      "name": "security-auditor",
+      "name": "docker-manager",
       "category": "engineering",
       "status": "draft",
-      "path": "skills/security-auditor/SKILL.md"
+      "path": "skills/docker-manager/SKILL.md"
     },
     {
       "name": "performance-profiler",
@@ -103,46 +139,40 @@
       "path": "skills/performance-profiler/SKILL.md"
     },
     {
-      "name": "web-research",
-      "category": "advanced",
+      "name": "python-engineering",
+      "category": "engineering",
       "status": "draft",
-      "path": "skills/web-research/SKILL.md"
+      "path": "skills/python-engineering/SKILL.md"
     },
     {
-      "name": "mcts-planner",
-      "category": "advanced",
+      "name": "rust-engineering",
+      "category": "engineering",
       "status": "draft",
-      "path": "skills/mcts-planner/SKILL.md"
+      "path": "skills/rust-engineering/SKILL.md"
     },
     {
-      "name": "workflow-orchestrator",
-      "category": "advanced",
+      "name": "security-auditor",
+      "category": "engineering",
       "status": "draft",
-      "path": "skills/workflow-orchestrator/SKILL.md"
+      "path": "skills/security-auditor/SKILL.md"
     },
     {
-      "name": "code-reviewer",
-      "category": "advanced",
+      "name": "systematic-debugging",
+      "category": "engineering",
       "status": "draft",
-      "path": "skills/code-reviewer/SKILL.md"
+      "path": "skills/systematic-debugging/SKILL.md"
     },
     {
-      "name": "agent-evaluator",
-      "category": "advanced",
+      "name": "test-driven-development",
+      "category": "engineering",
       "status": "draft",
-      "path": "skills/agent-evaluator/SKILL.md"
+      "path": "skills/test-driven-development/SKILL.md"
     },
     {
-      "name": "sandbox-monitor",
-      "category": "advanced",
+      "name": "typescript-engineering",
+      "category": "engineering",
       "status": "draft",
-      "path": "skills/sandbox-monitor/SKILL.md"
-    },
-    {
-      "name": "skill-registry",
-      "category": "advanced",
-      "status": "draft",
-      "path": "skills/skill-registry/SKILL.md"
+      "path": "skills/typescript-engineering/SKILL.md"
     }
   ]
 }
