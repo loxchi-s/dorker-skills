@@ -125,10 +125,15 @@ class GitHubActionsOIDCTokenProvider:
 
         parsed = urlsplit(endpoint)
         if (
-            parsed.scheme != "https" or not parsed.hostname or parsed.username
-            or parsed.password or parsed.fragment or len(endpoint) > 4096
+            parsed.scheme != "https"
+            or parsed.hostname != "pipelines.actions.githubusercontent.com"
+            or parsed.port not in (None, 443)
+            or parsed.username or parsed.password or parsed.fragment
+            or len(endpoint) > 4096
         ):
             raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint")
+        if len(bearer) > 16 * 1024 or any(char in bearer for char in "\\r\\n"):
+            raise OIDCVerificationError("invalid GitHub Actions OIDC request credential")
         try:
             parsed.port
         except ValueError as exc:
