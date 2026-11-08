@@ -11,7 +11,8 @@ Private GitHub registry for Dorker. Skills are instructions and metadata, not ex
 - `tests/test_validate_registry.py`: validator tests.
 - `agent-lab/`: provider-agnostic coding-agent scaffold, tests and GitHub Actions CI.
 - `POLICY.md`: execution and supply-chain policy.
-- `SOURCES.md`: upstream discovery references.
+- `SOURCES.md`: upstream discovery references and import policy.
+- `upstream-candidates.json`: machine-readable candidate registry; discovery-only, unreviewed and runtime-disabled.
 
 ## Validate
 ```sh
