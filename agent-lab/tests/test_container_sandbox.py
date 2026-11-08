@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from dorker_agent.container_sandbox import (
+    ContainerArtifactIntegrityError,
     ContainerExitError,
     ContainerOutputLimitError,
     ContainerResult,
@@ -47,6 +48,17 @@ class ContainerSandboxConfigTests(unittest.TestCase):
     def test_accepts_content_addressed_local_image_id(self):
         config = ContainerSandboxConfig(image="sha256:" + "b" * 64, command=("python",))
         self.assertTrue(config.image.startswith("sha256:"))
+
+    def test_expected_stdout_digest_validation(self):
+        digest = hashlib.sha256(b"expected").hexdigest()
+        config = ContainerSandboxConfig(
+            image=IMAGE, command=("cat",), expected_stdout_sha256=digest,
+        )
+        self.assertEqual(config.expected_stdout_sha256, digest)
+        with self.assertRaisesRegex(ValueError, "64-character hex digest"):
+            ContainerSandboxConfig(
+                image=IMAGE, command=("cat",), expected_stdout_sha256="not-a-digest",
+            )
 
     def test_bounded_stdin_payload(self):
         config = ContainerSandboxConfig(
@@ -239,6 +251,32 @@ class ContainerSandboxRunnerTests(unittest.TestCase):
         )
         self.assertEqual(result.stdout, b"done")
         self.assertEqual(ledger.get("job-1").state, ExecutionState.SUCCEEDED)
+
+    def test_expected_stdout_digest_mismatch_fails_ledger(self):
+        expected = hashlib.sha256(b"expected").hexdigest()
+        ledger = InMemoryExecutionLedger()
+        runner = ContainerSandboxRunner(
+            FakeRuntime(ContainerResult(0, b"actual", b"")),
+            ContainerSandboxConfig(
+                image=IMAGE, command=("cat",), expected_stdout_sha256=expected,
+            ),
+        )
+        with self.assertRaises(ContainerArtifactIntegrityError):
+            runner.run(timeout_seconds=2, execution_id="job-checksum", ledger=ledger)
+        self.assertEqual(ledger.get("job-checksum").state, ExecutionState.FAILED)
+
+    def test_expected_stdout_digest_match_succeeds(self):
+        expected = hashlib.sha256(b"expected").hexdigest()
+        ledger = InMemoryExecutionLedger()
+        runner = ContainerSandboxRunner(
+            FakeRuntime(ContainerResult(0, b"expected", b"")),
+            ContainerSandboxConfig(
+                image=IMAGE, command=("cat",), expected_stdout_sha256=expected,
+            ),
+        )
+        result = runner.run(timeout_seconds=2, execution_id="job-checksum-ok", ledger=ledger)
+        self.assertTrue(result.verify_stdout_sha256(expected))
+        self.assertEqual(ledger.get("job-checksum-ok").state, ExecutionState.SUCCEEDED)
 
     def test_nonzero_exit_is_failed(self):
         ledger = InMemoryExecutionLedger()
