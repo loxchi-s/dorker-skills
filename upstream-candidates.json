@@ -219,6 +219,62 @@
       "reviewed_by": null,
       "approved_for_import": false,
       "runtime_enabled": false
+    },
+    {
+      "repository": "crewAIInc/crewAI",
+      "url": "https://github.com/crewAIInc/crewAI",
+      "category": "agent-framework",
+      "tags": [
+        "crewai",
+        "multi-agent",
+        "crews",
+        "flows"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified_in_this_review",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "crewAIInc/skills",
+      "url": "https://github.com/crewAIInc/skills",
+      "category": "framework-skills",
+      "tags": [
+        "crewai-skills",
+        "agent-design",
+        "task-design"
+      ],
+      "default_branch": "main",
+      "status": "discovered",
+      "license_status": "not_verified_in_this_review",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
+    },
+    {
+      "repository": "langchain-ai/langchain",
+      "url": "https://github.com/langchain-ai/langchain",
+      "category": "agent-framework",
+      "tags": [
+        "langchain",
+        "runnables",
+        "retrieval",
+        "agents"
+      ],
+      "default_branch": "master",
+      "status": "discovered",
+      "license_status": "not_verified_in_this_review",
+      "revision": null,
+      "content_sha256": null,
+      "reviewed_by": null,
+      "approved_for_import": false,
+      "runtime_enabled": false
     }
   ]
 }
