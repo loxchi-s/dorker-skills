@@ -343,5 +343,66 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
             GitHubOIDCPolicy("aud", "owner/repo", 1, ("",))
 
 
+    def test_forged_claim_is_rejected_without_audit_mutation(self):
+        token = token_for(claims())
+        class TokenSource:
+            def acquire(self):
+                return token
+
+        identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.join(directory, "objects")
+            os.mkdir(root)
+            index = SQLiteArtifactIndex(
+                os.path.join(directory, "audit.sqlite3"),
+                ContentAddressedArtifactStore(root),
+                identity_verifier=identity,
+            )
+            forged = GitHubActorClaim(202, "attacker", token)
+            plan = ArtifactDeletionPlan((), 0, 0, "b" * 64)
+            with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
+                index.record_gc_plan(plan, claim=forged)
+            self.assertEqual(index.list_audit_events(), [])
+            self.assertTrue(index.verify_audit_log())
+
+    def test_distinct_signed_actor_can_approve_recorded_plan(self):
+        current_token = {"value": token_for(claims())}
+        class TokenSource:
+            def acquire(self):
+                return current_token["value"]
+
+        identity = GitHubActionsOIDCIdentityProvider(TokenSource(), self.verifier)
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.join(directory, "objects")
+            os.mkdir(root)
+            index = SQLiteArtifactIndex(
+                os.path.join(directory, "audit.sqlite3"),
+                ContentAddressedArtifactStore(root),
+                identity_verifier=identity,
+            )
+            plan = ArtifactDeletionPlan((), 0, 0, "c" * 64)
+            creator_claim = identity.acquire_claim()
+            index.record_gc_plan(plan, claim=creator_claim)
+
+            with self.assertRaisesRegex(ValueError, "different GitHub actor"):
+                index.record_gc_approval(
+                    plan.approval_token, claim=creator_claim, approved=True,
+                )
+            self.assertEqual(len(index.list_audit_events()), 1)
+
+            current_token["value"] = token_for(claims(actor_id="202", actor="approver"))
+            approver_claim = identity.acquire_claim()
+            index.record_gc_approval(
+                plan.approval_token, claim=approver_claim, approved=True,
+            )
+
+            events = index.list_audit_events()
+            self.assertEqual([event["action"] for event in events], [
+                "gc_plan_created", "gc_plan_approved",
+            ])
+            self.assertEqual(events[1]["actor"], "github:202:approver")
+            self.assertTrue(index.verify_audit_log())
+
+
 if __name__ == "__main__":
     unittest.main()
