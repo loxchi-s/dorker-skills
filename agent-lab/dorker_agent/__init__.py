@@ -10,6 +10,7 @@ from .tasks import TaskRequest
 
 from .isolated_worker import (
     IsolatedWorkerRunner,
+    ResourceLimits,
     WorkerCancelledError,
     WorkerCrashedError,
     WorkerError,
@@ -39,6 +40,7 @@ __all__ = [
     "ExecutionCancelledError",
     "ExecutionDeadlineExceeded",
     "IsolatedWorkerRunner",
+    "ResourceLimits",
     "WorkerError",
     "WorkerTimeoutError",
     "WorkerCancelledError",
