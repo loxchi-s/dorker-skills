@@ -34,7 +34,8 @@ def token_for(payload):
     header = {"alg": "RS256", "kid": "test-key", "typ": "JWT"}
     encoded_header = b64url(json.dumps(header, separators=(",", ":")).encode())
     encoded_payload = b64url(json.dumps(payload, separators=(",", ":")).encode())
-    return f"{encoded_header}.{encoded_payload}.{b64url(b'\x00' * 256)}"
+    signature = bytes(256)
+    return f"{encoded_header}.{encoded_payload}.{b64url(signature)}"
 
 
 def claims(**overrides):
