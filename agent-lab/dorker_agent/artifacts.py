@@ -265,6 +265,9 @@ class SQLiteArtifactIndex:
     def register(self, manifest: ArtifactManifest) -> str:
         if not isinstance(manifest, ArtifactManifest):
             raise TypeError("manifest must be an ArtifactManifest")
+        blob = self._blob_store.get(manifest.sha256)
+        if not manifest.verify(blob, max_bytes=self._blob_store.max_artifact_bytes):
+            raise ArtifactIntegrityError("manifest does not match published artifact bytes")
         artifact_id = self._manifest_id(manifest)
         manifest_json = manifest.to_json()
         with self._lock, closing(self._connect()) as db:
