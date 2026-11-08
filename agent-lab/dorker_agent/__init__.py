@@ -11,6 +11,8 @@ from .tasks import TaskRequest
 from .artifacts import (
     ArtifactIntegrityError,
     ArtifactGCDryRun,
+    ArtifactRetentionPolicy,
+    ArtifactDeletionPlan,
     ArtifactObjectInfo,
     ArtifactNotFoundError,
     ArtifactStoreError,
@@ -44,6 +46,8 @@ __all__ = [
     "ArtifactNotFoundError",
     "ArtifactIntegrityError",
     "ArtifactGCDryRun",
+    "ArtifactRetentionPolicy",
+    "ArtifactDeletionPlan",
     "ArtifactObjectInfo",
     "CrewAIAdapter",
     "LangChainAdapter",
