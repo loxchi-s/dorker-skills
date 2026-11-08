@@ -10,6 +10,7 @@ from dorker_agent.container_sandbox import ArtifactManifest
 from dorker_agent.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
+    ArtifactRetentionPolicy,
     ContentAddressedArtifactStore,
     SQLiteArtifactIndex,
 )
