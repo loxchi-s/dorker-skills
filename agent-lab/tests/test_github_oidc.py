@@ -113,7 +113,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
         header = b64url(b'{"alg":"RS256","kid":"test-key"}')
         payload = b64url(b'{"iss":"one","iss":"two"}')
         claim = GitHubActorClaim(101, "creator", f"{header}.{payload}.{b64url(b'x')}")
-        with self.assertRaisesRegex(OIDCVerificationError, "duplicate JSON key"):
+        with self.assertRaisesRegex(OIDCVerificationError, "invalid JWT JSON segment"):
             self.verifier.verify(claim)
 
     def test_rejects_unknown_or_ambiguous_key_id(self):
