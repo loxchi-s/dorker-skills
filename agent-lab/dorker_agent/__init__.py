@@ -7,6 +7,16 @@ from .framework_adapters import (
     LangChainAdapter,
 )
 from .tasks import TaskRequest
+
+from .isolated_worker import (
+    IsolatedWorkerRunner,
+    WorkerCancelledError,
+    WorkerCrashedError,
+    WorkerError,
+    WorkerHandlerError,
+    WorkerOutputLimitError,
+    WorkerTimeoutError,
+)
 from .execution import (
     DuplicateExecutionError, ExecutionRecord, ExecutionState, InMemoryExecutionLedger,
     SQLiteExecutionStore, ExecutionControl, ExecutionCancelledError, ExecutionDeadlineExceeded,
@@ -28,4 +38,11 @@ __all__ = [
     "ExecutionControl",
     "ExecutionCancelledError",
     "ExecutionDeadlineExceeded",
+    "IsolatedWorkerRunner",
+    "WorkerError",
+    "WorkerTimeoutError",
+    "WorkerCancelledError",
+    "WorkerCrashedError",
+    "WorkerHandlerError",
+    "WorkerOutputLimitError",
 ]
