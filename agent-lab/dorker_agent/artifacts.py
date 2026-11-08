@@ -36,9 +36,31 @@ class ArtifactIntegrityError(ArtifactStoreError):
 class ArtifactObjectInfo:
     sha256: str
     size_bytes: int
+    mtime_unix_ns: int
 
 
 @dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)
+class ArtifactRetentionPolicy:
+    min_age_seconds: int = 7 * 24 * 60 * 60
+    max_candidates: int = 100
+    max_scan_objects: int = 10_000
+
+    def __post_init__(self) -> None:
+        for field_name in ("min_age_seconds", "max_candidates", "max_scan_objects"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{field_name} must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactDeletionPlan:
+    candidates: tuple[ArtifactObjectInfo, ...]
+    total_bytes: int
+    cutoff_unix_ns: int
+    approval_token: str
+
+
 class ArtifactGCDryRun:
     scanned_objects: int
     referenced_objects: int
@@ -208,7 +230,7 @@ class ContentAddressedArtifactStore:
                         except OSError:
                             corrupt.append(digest)
                             continue
-                        objects.append(ArtifactObjectInfo(digest, len(data)))
+                        objects.append(ArtifactObjectInfo(digest, len(data), info.st_mtime_ns))
                 finally:
                     os.close(shard_fd)
         finally:
@@ -422,6 +444,44 @@ class SQLiteArtifactIndex:
             missing_digests=missing,
             corrupt_digests=tuple(sorted(corrupt)),
             truncated=truncated,
+        )
+
+    def build_gc_plan(
+        self, policy: ArtifactRetentionPolicy, *, now_unix_ns: int | None = None,
+    ) -> ArtifactDeletionPlan:
+        """Build a non-destructive, approval-gated candidate plan; never deletes."""
+        if not isinstance(policy, ArtifactRetentionPolicy):
+            raise TypeError("policy must be an ArtifactRetentionPolicy")
+        if now_unix_ns is None:
+            now_unix_ns = time.time_ns()
+        if isinstance(now_unix_ns, bool) or not isinstance(now_unix_ns, int) or now_unix_ns < 0:
+            raise ValueError("now_unix_ns must be a non-negative integer")
+        report = self.dry_run_gc(max_scan_objects=policy.max_scan_objects)
+        if report.truncated:
+            raise RuntimeError("cannot build deletion plan from a truncated scan")
+        cutoff = now_unix_ns - policy.min_age_seconds * 1_000_000_000
+        eligible = sorted(
+            (item for item in report.orphaned if item.mtime_unix_ns <= cutoff),
+            key=lambda item: (item.mtime_unix_ns, item.sha256),
+        )[:policy.max_candidates]
+        candidates = tuple(eligible)
+        payload = json.dumps(
+            {
+                "cutoff_unix_ns": cutoff,
+                "candidates": [
+                    {"sha256": item.sha256, "size_bytes": item.size_bytes,
+                     "mtime_unix_ns": item.mtime_unix_ns}
+                    for item in candidates
+                ],
+            },
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        token = hashlib.sha256(payload).hexdigest()
+        return ArtifactDeletionPlan(
+            candidates=candidates,
+            total_bytes=sum(item.size_bytes for item in candidates),
+            cutoff_unix_ns=cutoff,
+            approval_token=token,
         )
 
     @staticmethod
