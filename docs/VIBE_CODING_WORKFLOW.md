@@ -78,7 +78,7 @@ AI review is advisory, not an approval authority. The repository owner must make
 
 ## 7. After merge
 
-Confirm the merged commit is on `main), check the resulting CI run, and record follow-up work as Issues. Delete the feature branch when it is no longer needed.
+Confirm the merged commit is on `main`, check the resulting CI run, and record follow-up work as Issues. Delete the feature branch when it is no longer needed.
 
 ## Current enforcement limits
 
