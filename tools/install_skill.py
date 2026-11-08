@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -23,14 +22,14 @@ def main() -> int:
     parser.add_argument("name", help="skill name from catalog.json")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="local registry checkout")
     parser.add_argument("--dest", type=Path, default=Path.home() / ".dorker" / "skills")
-    parser.add_argument("--revision", required=True, help="immutable Git commit SHA for provenance")
-    parser.add_argument("--apply", action="store_true", help="perform installation; otherwise print a dry run")
+    parser.add_argument("--revision", required=True, help="immutable Git commit SHA")
+    parser.add_argument("--apply", action="store_true", help="perform installation; otherwise dry-run")
     args = parser.parse_args()
 
     if not NAME_RE.fullmatch(args.name):
         parser.error("invalid skill name")
     if not re.fullmatch(r"[0-9a-fA-F]{40,64}", args.revision):
-        parser.error("--revision must be an immutable 40- or 64-character hex commit SHA")
+        parser.error("--revision must be a 40- or 64-character hex commit SHA")
 
     root = args.root.resolve(strict=True)
     catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
@@ -39,60 +38,67 @@ def main() -> int:
         parser.error(f"skill not found in catalog: {args.name}")
     if entry.get("status") not in {"draft", "reviewed", "tested"}:
         parser.error("unsupported skill lifecycle status")
+    expected_rel = f"skills/{args.name}/SKILL.md"
+    if entry.get("path") != expected_rel:
+        parser.error("catalog path does not match canonical skill path")
 
-    source = (root / entry["path"]).resolve(strict=True)
-    skills_root = (root / "skills").resolve(strict=True)
-    if skills_root not in source.parents or source.is_symlink() or not source.is_file():
+    skills_root = root / "skills"
+    candidate = root / expected_rel
+    if candidate.is_symlink() or skills_root.is_symlink():
+        parser.error("symlinked skill paths are not allowed")
+    source = candidate.resolve(strict=True)
+    if skills_root.resolve(strict=True) not in source.parents or not source.is_file():
         parser.error("skill path escapes registry or is not a regular file")
 
     payload = source.read_bytes()
     if len(payload) > 256 * 1024:
         parser.error("SKILL.md exceeds 256 KiB")
     digest = sha256(payload)
+
     dest_root = args.dest.expanduser().resolve()
     target_dir = dest_root / args.name
     target_file = target_dir / "SKILL.md"
     manifest_file = dest_root / "installed.json"
-
+    if target_dir.is_symlink() or target_file.is_symlink():
+        parser.error("symlinked installation targets are not allowed")
     if target_dir.exists() and not target_dir.is_dir():
         parser.error("target path exists and is not a directory")
     if target_file.exists():
-        parser.error("skill already installed; manual review and a separate upgrade workflow are required")
+        parser.error("skill already installed; use a separately reviewed upgrade workflow")
 
     manifest = {}
     if manifest_file.exists():
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         parser.error("installed.json must contain a JSON object")
+
+    record = {
+        "revision": args.revision.lower(),
+        "sha256": digest,
+        "source_path": expected_rel,
+        "installed_file": str(target_file),
+        "execution_enabled": False,
+    }
     if not args.apply:
         print(json.dumps({
-            "status": "dry_run",
-            "skill": args.name,
-            "sha256": digest,
-            "revision": args.revision.lower(),
-            "target": str(target_file),
+            "status": "dry_run", "skill": args.name, **record,
             "execution": "not_performed",
         }, indent=2))
         return 0
 
     dest_root.mkdir(parents=True, exist_ok=True)
-    target_dir.mkdir(mode=0o700)
-    temp_name = None
+    target_dir.mkdir(mode=0o700, exist_ok=True)
+    temp_skill = None
+    temp_manifest = None
     try:
         with tempfile.NamedTemporaryFile("wb", dir=target_dir, delete=False) as tmp:
-            temp_name = tmp.name
+            temp_skill = tmp.name
             tmp.write(payload)
             tmp.flush()
             os.fsync(tmp.fileno())
-        os.chmod(temp_name, 0o600)
-        os.replace(temp_name, target_file)
-        manifest[args.name] = {
-            "revision": args.revision.lower(),
-            "sha256": digest,
-            "source_path": entry["path"],
-            "installed_file": str(target_file),
-            "execution_enabled": False,
-        }
+        os.chmod(temp_skill, 0o600)
+        os.replace(temp_skill, target_file)
+        manifest[args.name] = record
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=dest_root, delete=False) as tmp:
             temp_manifest = tmp.name
             json.dump(manifest, tmp, indent=2)
@@ -102,8 +108,9 @@ def main() -> int:
         os.chmod(temp_manifest, 0o600)
         os.replace(temp_manifest, manifest_file)
     except Exception:
-        if temp_name and os.path.exists(temp_name):
-            os.unlink(temp_name)
+        for temp in (temp_skill, temp_manifest):
+            if temp and os.path.exists(temp):
+                os.unlink(temp)
         if target_file.exists():
             target_file.unlink()
         if target_dir.exists() and not any(target_dir.iterdir()):
