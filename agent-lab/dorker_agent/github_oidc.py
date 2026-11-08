@@ -123,21 +123,21 @@ class GitHubActionsOIDCTokenProvider:
         if not isinstance(endpoint, str) or not isinstance(bearer, str) or not endpoint or not bearer:
             raise OIDCVerificationError("GitHub Actions OIDC request credentials are unavailable")
 
-        parsed = urlsplit(endpoint)
+        try:
+            parsed = urlsplit(endpoint)
+            port = parsed.port
+        except ValueError as exc:
+            raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint") from exc
         if (
             parsed.scheme != "https"
             or parsed.hostname != "pipelines.actions.githubusercontent.com"
-            or parsed.port not in (None, 443)
+            or port not in (None, 443)
             or parsed.username or parsed.password or parsed.fragment
             or len(endpoint) > 4096
         ):
             raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint")
         if len(bearer) > 16 * 1024 or any(char in bearer for char in "\\r\\n"):
             raise OIDCVerificationError("invalid GitHub Actions OIDC request credential")
-        try:
-            parsed.port
-        except ValueError as exc:
-            raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint") from exc
         query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=False)
         if any(key == "audience" for key, _ in query):
             raise OIDCVerificationError("OIDC request endpoint already contains an audience")
