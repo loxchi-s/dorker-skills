@@ -86,12 +86,12 @@ def _worker_entry(
             separators=(",", ":"),
         ).encode("utf-8")
         if len(encoded) > max_output_bytes:
-            send_conn.send(("error", "WorkerOutputLimitError"))
+            send_conn.send_bytes(json.dumps({"ok": False, "error": "WorkerOutputLimitError"}).encode())
         else:
             send_conn.send_bytes(encoded)
     except (ExecutionCancelledError, ExecutionDeadlineExceeded) as exc:
         try:
-            send_conn.send(("error", type(exc).__name__))
+            send_conn.send_bytes(json.dumps({"ok": False, "error": type(exc).__name__}).encode())
         except (BrokenPipeError, EOFError, OSError):
             pass
     except BaseException as exc:
@@ -214,28 +214,28 @@ class IsolatedWorkerRunner:
                     break
                 if recv_conn.poll(self._poll_interval):
                     try:
-                        message = recv_conn.recv()
+                        message = recv_conn.recv_bytes(self._max_output_bytes + 1024)
                     except (EOFError, OSError):
                         failure = WorkerCrashedError("worker response channel closed")
                         break
-                    if isinstance(message, tuple) and len(message) == 2 and message[0] == "error":
-                        error_type = message[1]
-                        if error_type == "WorkerOutputLimitError":
-                            failure = WorkerOutputLimitError("worker output limit exceeded")
-                        elif error_type == "ExecutionCancelledError":
-                            failure = WorkerCancelledError("worker cancelled")
-                        elif error_type == "ExecutionDeadlineExceeded":
-                            failure = WorkerTimeoutError("worker deadline exceeded")
+                    try:
+                        envelope = json.loads(message.decode("utf-8"))
+                        if not isinstance(envelope, dict):
+                            raise ValueError
+                        if envelope.get("ok") is not True:
+                            error_type = envelope.get("error")
+                            if error_type == "WorkerOutputLimitError":
+                                failure = WorkerOutputLimitError("worker output limit exceeded")
+                            elif error_type == "ExecutionCancelledError":
+                                failure = WorkerCancelledError("worker cancelled")
+                            elif error_type == "ExecutionDeadlineExceeded":
+                                failure = WorkerTimeoutError("worker deadline exceeded")
+                            else:
+                                failure = WorkerHandlerError("registered handler failed")
                         else:
-                            failure = WorkerHandlerError("registered handler failed")
-                    else:
-                        try:
-                            envelope = json.loads(message.decode("utf-8"))
-                            if not isinstance(envelope, dict) or envelope.get("ok") is not True:
-                                raise ValueError
                             result = envelope["result"]
-                        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, ValueError, AttributeError):
-                            failure = WorkerCrashedError("worker returned an invalid response")
+                    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, ValueError, AttributeError):
+                        failure = WorkerCrashedError("worker returned an invalid response")
                     break
                 if not process.is_alive():
                     if recv_conn.poll():
