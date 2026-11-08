@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 
+from dorker_agent.container_sandbox import ArtifactManifest
 from dorker_agent.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
@@ -182,6 +183,14 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         index.put(b"one", name="one", media_type="x", source="test")
         with self.assertRaisesRegex(RuntimeError, "capacity"):
             index.put(b"two", name="two", media_type="x", source="test")
+
+    def test_register_rejects_manifest_without_published_blob(self):
+        manifest = ArtifactManifest.from_bytes(
+            name="missing.bin", media_type="application/octet-stream",
+            data=b"not-published", source="test",
+        )
+        with self.assertRaises(ArtifactNotFoundError):
+            self.index.register(manifest)
 
     def test_unknown_and_invalid_ids(self):
         self.assertIsNone(self.index.get("0" * 64))
