@@ -57,7 +57,15 @@
         "executing-plans",
         "using-superpowers"
       ],
-      "review_note": "Selected process skills fit the Dorker coding-agent workflow but require adaptation to preserve explicit approval gates and GitHub-only operation. Deferred skills require subagent/worktree/runtime capabilities or contain mandatory invocation rules that conflict with Dorker policy."
+      "review_note": "Selected process skills fit the Dorker coding-agent workflow but require adaptation to preserve explicit approval gates and GitHub-only operation. Deferred skills require subagent/worktree/runtime capabilities or contain mandatory invocation rules that conflict with Dorker policy.",
+      "adapted_into_dorker": [
+        "brainstorming",
+        "writing-plans",
+        "test-driven-development",
+        "systematic-debugging",
+        "verification-before-completion"
+      ],
+      "adaptation_status": "dorker_native_drafts_created"
     },
     {
       "repository": "obra/superpowers-skills",
