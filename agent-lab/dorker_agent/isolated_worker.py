@@ -96,7 +96,7 @@ def _worker_entry(
             pass
     except BaseException as exc:
         try:
-            send_conn.send(("error", type(exc).__name__))
+            send_conn.send_bytes(json.dumps({"ok": False, "error": type(exc).__name__}).encode())
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
