@@ -130,7 +130,7 @@ class IsolatedWorkerTests(unittest.TestCase):
                     state = stat_file.read().split()[2]
                 if state == "Z":
                     break
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 break
             time.sleep(0.02)
         else:
