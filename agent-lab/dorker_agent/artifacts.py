@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 
 from .container_sandbox import ArtifactManifest
@@ -29,6 +30,22 @@ class ArtifactNotFoundError(ArtifactStoreError):
 
 class ArtifactIntegrityError(ArtifactStoreError):
     """Stored bytes do not match their content address."""
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactObjectInfo:
+    sha256: str
+    size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactGCDryRun:
+    scanned_objects: int
+    referenced_objects: int
+    orphaned: tuple[ArtifactObjectInfo, ...]
+    missing_digests: tuple[str, ...]
+    corrupt_digests: tuple[str, ...]
+    truncated: bool
 
 
 class ContentAddressedArtifactStore:
@@ -147,6 +164,53 @@ class ContentAddressedArtifactStore:
             if shard_fd >= 0:
                 os.close(shard_fd)
             os.close(root_fd)
+
+    def scan_objects(self, *, max_objects: int = 10_000) -> tuple[list[ArtifactObjectInfo], list[str], bool]:
+        """Enumerate canonical blobs without following symlinks; verify every object."""
+        if isinstance(max_objects, bool) or not isinstance(max_objects, int) or max_objects < 1:
+            raise ValueError("max_objects must be a positive integer")
+        objects: list[ArtifactObjectInfo] = []
+        corrupt: list[str] = []
+        truncated = False
+        root_fd = self._open_root()
+        try:
+            for shard_name in sorted(os.listdir(root_fd)):
+                if not re.fullmatch(r"[0-9a-f]{2}", shard_name):
+                    continue
+                try:
+                    shard_fd = os.open(
+                        shard_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=root_fd,
+                    )
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                try:
+                    for object_name in sorted(os.listdir(shard_fd)):
+                        if not re.fullmatch(r"[0-9a-f]{62}", object_name):
+                            continue
+                        digest = shard_name + object_name
+                        try:
+                            info = os.stat(object_name, dir_fd=shard_fd, follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue
+                        if not stat.S_ISREG(info.st_mode):
+                            continue
+                        if len(objects) + len(corrupt) >= max_objects:
+                            truncated = True
+                            return objects, corrupt, truncated
+                        try:
+                            data = self.get(digest)
+                        except ArtifactIntegrityError:
+                            corrupt.append(digest)
+                            continue
+                        except ArtifactNotFoundError:
+                            continue
+                        objects.append(ArtifactObjectInfo(digest, len(data)))
+                finally:
+                    os.close(shard_fd)
+        finally:
+            os.close(root_fd)
+        return objects, corrupt, truncated
 
     def contains(self, sha256: str) -> bool:
         try:
@@ -334,6 +398,28 @@ class SQLiteArtifactIndex:
             (row["artifact_id"], ArtifactManifest(**json.loads(row["manifest_json"])))
             for row in rows
         ]
+
+    def dry_run_gc(self, *, max_scan_objects: int = 10_000) -> ArtifactGCDryRun:
+        """Report unreferenced blobs; this method never deletes or mutates data."""
+        objects, corrupt, truncated = self._blob_store.scan_objects(max_objects=max_scan_objects)
+        with closing(self._connect()) as db:
+            referenced = {
+                row[0] for row in db.execute(
+                    "SELECT DISTINCT sha256 FROM artifact_manifests"
+                ).fetchall()
+            }
+        object_digests = {item.sha256 for item in objects}
+        corrupt_set = set(corrupt)
+        missing = tuple(sorted(referenced - object_digests - corrupt_set))
+        orphaned = tuple(item for item in objects if item.sha256 not in referenced)
+        return ArtifactGCDryRun(
+            scanned_objects=len(objects) + len(corrupt),
+            referenced_objects=len(referenced),
+            orphaned=orphaned,
+            missing_digests=missing,
+            corrupt_digests=tuple(sorted(corrupt)),
+            truncated=truncated,
+        )
 
     @staticmethod
     def _validate_artifact_id(artifact_id: str) -> str:
