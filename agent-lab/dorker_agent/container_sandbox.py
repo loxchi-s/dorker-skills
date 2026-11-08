@@ -164,7 +164,7 @@ class DockerCLIContainerRuntime:
         argv = [
             self._docker, "run", "--rm", "--pull=never", "--init",
             f"--cidfile={cidfile}",
-            "--network=none", "--read-only", "--cap-drop=ALL",
+            "--interactive", "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges:true",
             f"--user={config.user_uid}:{config.user_gid}",
             f"--memory={config.memory_bytes}",
