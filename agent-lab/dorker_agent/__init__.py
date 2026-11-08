@@ -7,7 +7,7 @@ from .framework_adapters import (
     LangChainAdapter,
 )
 from .tasks import TaskRequest
-from .execution import DuplicateExecutionError, ExecutionRecord, ExecutionState, InMemoryExecutionLedger
+from .execution import DuplicateExecutionError, ExecutionRecord, ExecutionState, InMemoryExecutionLedger, SQLiteExecutionStore
 
 __all__ = [
     "Agent",
@@ -21,4 +21,5 @@ __all__ = [
     "ExecutionRecord",
     "ExecutionState",
     "InMemoryExecutionLedger",
+    "SQLiteExecutionStore",
 ]
