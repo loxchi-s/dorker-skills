@@ -1,14 +1,14 @@
 """Execution lifecycle contracts and storage backends."""
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
-from threading import Event
 from contextlib import closing
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 
 
 class ExecutionState(str, Enum):
@@ -36,8 +36,8 @@ class ExecutionControl:
         if timeout_seconds is not None:
             if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
                 raise ValueError("timeout_seconds must be a positive number")
-            if timeout_seconds <= 0:
-                raise ValueError("timeout_seconds must be a positive number")
+            if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+                raise ValueError("timeout_seconds must be a finite positive number")
         self._deadline = (
             time.monotonic() + float(timeout_seconds)
             if timeout_seconds is not None else None
