@@ -150,8 +150,8 @@ def _worker_entry(
 class IsolatedWorkerRunner:
     """Run an allowlisted, importable handler in a fresh spawn process.
 
-    Handler code is trusted application code. This class does not provide
-    filesystem, network, syscall, memory, CPU, or descendant-process isolation.
+    Handler code is trusted application code. POSIX process groups and optional
+    rlimits provide cleanup/resource ceilings, not a hostile-code sandbox.
     """
 
     def __init__(
