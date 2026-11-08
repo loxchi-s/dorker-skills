@@ -81,30 +81,37 @@ class ContentAddressedArtifactStore:
                     shard_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                     dir_fd=root_fd,
                 )
-                fd = os.open(
-                    temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                    0o600, dir_fd=shard_fd,
-                )
                 try:
-                    view = memoryview(data)
-                    offset = 0
-                    while offset < len(view):
-                        offset += os.write(fd, view[offset:offset + 65536])
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                try:
-                    os.link(
-                        temp_name, object_name, src_dir_fd=shard_fd,
-                        dst_dir_fd=shard_fd, follow_symlinks=False,
+                    fd = os.open(
+                        temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600, dir_fd=shard_fd,
                     )
-                    os.fsync(shard_fd)
-                except FileExistsError:
-                    existing = self._read_from_shard(shard_fd, object_name)
-                    if not hmac.compare_digest(hashlib.sha256(existing).hexdigest(), manifest.sha256):
-                        raise ArtifactIntegrityError("existing content-addressed object failed digest verification")
+                    try:
+                        view = memoryview(data)
+                        offset = 0
+                        while offset < len(view):
+                            written = os.write(fd, view[offset:offset + 65536])
+                            if written <= 0:
+                                raise ArtifactStoreError("short write while storing artifact")
+                            offset += written
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+                    try:
+                        os.link(
+                            temp_name, object_name, src_dir_fd=shard_fd,
+                            dst_dir_fd=shard_fd, follow_symlinks=False,
+                        )
+                        os.fsync(shard_fd)
+                    except FileExistsError:
+                        existing = self._read_from_shard(shard_fd, object_name)
+                        if not hmac.compare_digest(hashlib.sha256(existing).hexdigest(), manifest.sha256):
+                            raise ArtifactIntegrityError("existing content-addressed object failed digest verification")
                 finally:
-                    os.unlink(temp_name, dir_fd=shard_fd)
+                    try:
+                        os.unlink(temp_name, dir_fd=shard_fd)
+                    except FileNotFoundError:
+                        pass
             finally:
                 if shard_fd >= 0:
                     os.close(shard_fd)
