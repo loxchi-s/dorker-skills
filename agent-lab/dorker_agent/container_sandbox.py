@@ -1,19 +1,23 @@
-"""OCI container sandbox contract.
+"""OCI container sandbox contract and Docker CLI runtime adapter.
 
-The runner delegates to an injected trusted runtime port. This module does not
-connect to a Docker socket or claim isolation until a real runtime is integrated
-and tested on the target host.
+The Docker daemon and CLI are trusted infrastructure. Never expose their control
+socket or credentials to an agent. This adapter is Linux-host oriented.
 """
 from __future__ import annotations
 
 import math
+import os
 import re
+import stat
+import subprocess
+import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from .execution import (
-    ExecutionCancelledError,
     ExecutionControl,
     ExecutionDeadlineExceeded,
     InMemoryExecutionLedger,
@@ -32,12 +36,12 @@ class ContainerExitError(ContainerSandboxError):
 
 
 class ContainerOutputLimitError(ContainerSandboxError):
-    """The runtime returned output beyond the configured bound."""
+    """The runtime emitted output beyond the configured bound."""
 
 
 @dataclass(frozen=True, slots=True)
 class Mount:
-    """Explicit host-to-container mount; read-only unless opted in."""
+    """Host-to-container mount; read-only unless explicitly opted in."""
 
     source: str
     target: str
@@ -67,8 +71,6 @@ class ContainerSandboxConfig:
             raise ValueError("command must be a non-empty tuple of arguments")
         if any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in self.command):
             raise ValueError("command arguments must be non-empty strings without NUL")
-        if any("\x00" in arg for arg in self.command):
-            raise ValueError("invalid command argument")
         for name, value in (
             ("user_uid", self.user_uid), ("user_gid", self.user_gid),
             ("memory_bytes", self.memory_bytes), ("pids_limit", self.pids_limit),
@@ -92,6 +94,8 @@ class ContainerSandboxConfig:
                 raise TypeError("mounts must contain Mount values")
             source = _absolute_path(mount.source, "mount source")
             target = _absolute_path(mount.target, "mount target")
+            if "," in source or "," in target:
+                raise ValueError("mount paths must not contain commas")
             if target in targets:
                 raise ValueError("duplicate container mount target")
             targets.add(target)
@@ -122,24 +126,176 @@ class ContainerResult:
 
 
 class ContainerRuntime(Protocol):
-    """Trusted runtime adapter; implementations must stream-bound output."""
+    def run_container(
+        self, config: ContainerSandboxConfig, *, timeout_seconds: float,
+        control: ExecutionControl | None,
+    ) -> ContainerResult: ...
+
+
+class DockerCLIContainerRuntime:
+    """Run a pinned image through Docker CLI without a shell.
+
+    Requires a trusted local Docker daemon and a preloaded image (--pull=never).
+    Output is drained concurrently and retained only up to max_output_bytes.
+    """
+
+    def __init__(self, docker_executable: str = "docker") -> None:
+        if (not isinstance(docker_executable, str) or not docker_executable
+                or "\x00" in docker_executable):
+            raise ValueError("docker_executable must be a non-empty executable path")
+        self._docker = docker_executable
+
+    def build_argv(self, config: ContainerSandboxConfig, cidfile: str) -> list[str]:
+        if not os.path.isabs(cidfile):
+            raise ValueError("cidfile path must be absolute")
+        argv = [
+            self._docker, "run", "--rm", "--pull=never", "--init",
+            f"--cidfile={cidfile}",
+            "--network=none", "--read-only", "--cap-drop=ALL",
+            "--security-opt=no-new-privileges:true",
+            f"--user={config.user_uid}:{config.user_gid}",
+            f"--memory={config.memory_bytes}",
+            f"--cpus={config.cpu_limit}",
+            f"--pids-limit={config.pids_limit}",
+            f"--tmpfs=/tmp:rw,noexec,nosuid,nodev,size={config.tmpfs_bytes}",
+            "--workdir=/tmp",
+        ]
+        for mount in config.mounts:
+            source = os.path.realpath(mount.source)
+            roots = tuple(os.path.realpath(root) for root in config.allowed_mount_roots)
+            if not any(_is_within(source, root) for root in roots):
+                raise ValueError("resolved mount source is outside allowed mount roots")
+            try:
+                mode = os.stat(source).st_mode
+            except OSError as exc:
+                raise ValueError("mount source does not exist or is inaccessible") from exc
+            if stat.S_ISSOCK(mode):
+                raise ValueError("Unix sockets cannot be mounted into the container")
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise ValueError("mount source must be a regular file or directory")
+            mount_spec = f"type=bind,src={source},dst={mount.target}"
+            if mount.read_only:
+                mount_spec += ",readonly"
+            argv.append(f"--mount={mount_spec}")
+        argv.extend([config.image, *config.command])
+        return argv
 
     def run_container(
         self, config: ContainerSandboxConfig, *, timeout_seconds: float,
         control: ExecutionControl | None,
     ) -> ContainerResult:
-        """Run with the exact policy in config and enforce timeout/cancellation."""
-        ...
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+            raise ValueError("timeout_seconds must be a positive finite number")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a positive finite number")
+
+        with tempfile.TemporaryDirectory(prefix="dorker-container-") as tmp:
+            cidfile = os.path.join(tmp, "container.id")
+            argv = self.build_argv(config, cidfile)
+            try:
+                process = subprocess.Popen(
+                    argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, shell=False, close_fds=True,
+                )
+            except OSError as exc:
+                raise ContainerSandboxError("unable to start Docker CLI") from exc
+
+            output_lock = threading.Lock()
+            output_size = 0
+            output_overflow = threading.Event()
+            stdout_parts: list[bytes] = []
+            stderr_parts: list[bytes] = []
+
+            def drain(stream, parts: list[bytes]) -> None:
+                nonlocal output_size
+                try:
+                    while True:
+                        chunk = stream.read(8192)
+                        if not chunk:
+                            break
+                        with output_lock:
+                            remaining = config.max_output_bytes - output_size
+                            if len(chunk) > remaining:
+                                output_overflow.set()
+                            if remaining > 0:
+                                parts.append(chunk[:remaining])
+                                output_size += min(len(chunk), remaining)
+                finally:
+                    stream.close()
+
+            out_thread = threading.Thread(target=drain, args=(process.stdout, stdout_parts), daemon=True)
+            err_thread = threading.Thread(target=drain, args=(process.stderr, stderr_parts), daemon=True)
+            out_thread.start()
+            err_thread.start()
+            deadline = time.monotonic() + float(timeout_seconds)
+            forced_stop = False
+            try:
+                while process.poll() is None:
+                    if output_overflow.is_set():
+                        forced_stop = True
+                        self._stop_container(cidfile)
+                        process.kill()
+                        raise ContainerOutputLimitError("container output limit exceeded")
+                    if control is not None:
+                        try:
+                            control.check()
+                        except Exception:
+                            forced_stop = True
+                            self._stop_container(cidfile)
+                            process.kill()
+                            raise
+                    if time.monotonic() >= deadline:
+                        forced_stop = True
+                        self._stop_container(cidfile)
+                        process.kill()
+                        raise ExecutionDeadlineExceeded("container execution deadline exceeded")
+                    time.sleep(0.025)
+                process.wait()
+            finally:
+                if process.poll() is None:
+                    forced_stop = True
+                    self._stop_container(cidfile)
+                    process.kill()
+                process.wait()
+                out_thread.join(timeout=2)
+                err_thread.join(timeout=2)
+                if forced_stop:
+                    self._stop_container(cidfile)
+
+            if output_overflow.is_set():
+                raise ContainerOutputLimitError("container output limit exceeded")
+            result = ContainerResult(
+                process.returncode,
+                b"".join(stdout_parts),
+                b"".join(stderr_parts),
+            )
+            if result.exit_code != 0:
+                raise ContainerExitError(f"container exited with status {result.exit_code}")
+            return result
+
+    def _stop_container(self, cidfile: str) -> None:
+        try:
+            with open(cidfile, "r", encoding="ascii") as handle:
+                container_id = handle.read(128).strip()
+        except OSError:
+            return
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            return
+        try:
+            subprocess.run(
+                [self._docker, "kill", container_id],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, shell=False, check=False, timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 
 Ledger = InMemoryExecutionLedger | SQLiteExecutionStore
 
 
 class ContainerSandboxRunner:
-    """Validate policy, invoke a trusted runtime port, and record lifecycle.
-
-    This is a contract/orchestrator, not a concrete Docker/Podman implementation.
-    """
+    """Validate policy, invoke runtime, and record execution lifecycle."""
 
     def __init__(self, runtime: ContainerRuntime, config: ContainerSandboxConfig) -> None:
         if not callable(getattr(runtime, "run_container", None)):
@@ -186,8 +342,7 @@ class ContainerSandboxRunner:
                     result.stdout.decode("utf-8", errors="replace") or "<empty>",
                 )
             return result
-        except (ExecutionCancelledError, ExecutionDeadlineExceeded,
-                ContainerSandboxError, Exception) as exc:
+        except Exception as exc:
             if ledger is not None:
                 ledger.fail(execution_id, exc)
             raise
