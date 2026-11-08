@@ -77,6 +77,7 @@ print("mount-boundary-probe: PASS")
                 image=IMAGE, command=("python", "-I", "-c", probe),
                 allowed_mount_roots=(host_dir,),
                 mounts=(Mount(host_dir, "/input", read_only=True),),
+                allow_host_mounts=True,
                 max_output_bytes=4096,
             )
             result = RUNTIME.run_container(config, timeout_seconds=15, control=None)
