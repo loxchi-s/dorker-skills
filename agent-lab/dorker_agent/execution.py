@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -103,7 +104,7 @@ class SQLiteExecutionStore:
         return db
 
     def _initialize(self) -> None:
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS executions (
@@ -155,7 +156,7 @@ class SQLiteExecutionStore:
 
     def get(self, execution_id: str) -> ExecutionRecord | None:
         _validate_id(execution_id)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             row = db.execute(
                 "SELECT execution_id,state,result,error_type FROM executions WHERE execution_id=?",
                 (execution_id,),
