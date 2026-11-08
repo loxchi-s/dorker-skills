@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Mapping, Protocol
 
 from .capabilities import CapabilityPolicy, DEFAULT_POLICY
-from .execution import InMemoryExecutionLedger
+from .execution import InMemoryExecutionLedger, SQLiteExecutionStore
 from .tasks import TaskRequest
 
 
@@ -38,7 +38,7 @@ def _response_text(result: object, *, attribute: str | None = None) -> str:
 def _invoke_with_ledger(
     invoke,
     *,
-    ledger: InMemoryExecutionLedger | None,
+    ledger: InMemoryExecutionLedger | SQLiteExecutionStore | None,
     execution_id: str | None,
 ) -> str:
     if (ledger is None) != (execution_id is None):
