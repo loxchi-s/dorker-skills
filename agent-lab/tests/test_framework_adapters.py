@@ -78,6 +78,20 @@ class FrameworkAdapterTests(unittest.TestCase):
             CrewAIAdapter(crew, policy=policy).run("not a task")
         self.assertEqual(crew.calls, 0)
 
+    def test_langchain_plain_string_response(self):
+        policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
+        self.assertEqual(
+            LangChainAdapter(FakeRunnable(result="plain text"), policy=policy).run(TASK),
+            "plain text",
+        )
+
+    def test_crewai_plain_string_response(self):
+        policy = CapabilityPolicy(frozenset({CrewAIAdapter.CAPABILITY}))
+        self.assertEqual(
+            CrewAIAdapter(FakeCrew(result="plain text"), policy=policy).run(TASK),
+            "plain text",
+        )
+
     def test_unsupported_response_rejected(self):
         policy = CapabilityPolicy(frozenset({LangChainAdapter.CAPABILITY}))
         with self.assertRaises(FrameworkExecutionError):
