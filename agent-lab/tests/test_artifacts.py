@@ -247,6 +247,46 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         self.assertTrue(report.truncated)
         self.assertTrue(self.blobs.contains(first.sha256))
 
+    def test_retention_plan_includes_only_old_orphan_blobs(self):
+        old = self.blobs.put(b"old-orphan", name="old", media_type="x", source="test")
+        recent = self.blobs.put(b"recent-orphan", name="recent", media_type="x", source="test")
+        self.index.put(b"referenced", name="keep", media_type="x", source="test")
+        old_path = os.path.join(self.blobs._root, old.sha256[:2], old.sha256[2:])
+        os.utime(old_path, ns=(1_000_000_000, 1_000_000_000))
+        now = 10_000_000_000
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=5, max_candidates=10),
+            now_unix_ns=now,
+        )
+        self.assertEqual([item.sha256 for item in plan.candidates], [old.sha256])
+        self.assertEqual(plan.total_bytes, len(b"old-orphan"))
+        self.assertEqual(len(plan.approval_token), 64)
+        self.assertTrue(self.blobs.contains(old.sha256))
+        self.assertTrue(self.blobs.contains(recent.sha256))
+
+    def test_retention_plan_is_deterministic_for_same_snapshot_and_cutoff(self):
+        self.blobs.put(b"orphan", name="old", media_type="x", source="test")
+        now = 100_000_000_000
+        policy = ArtifactRetentionPolicy(min_age_seconds=1, max_candidates=5)
+        first = self.index.build_gc_plan(policy, now_unix_ns=now)
+        second = self.index.build_gc_plan(policy, now_unix_ns=now)
+        self.assertEqual(first, second)
+
+    def test_retention_plan_rejects_truncated_scan(self):
+        for value in (b"a", b"b"):
+            self.blobs.put(value, name="x", media_type="x", source="test")
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            self.index.build_gc_plan(
+                ArtifactRetentionPolicy(max_scan_objects=1),
+                now_unix_ns=100_000_000_000,
+            )
+
+    def test_retention_policy_validates_bounds(self):
+        with self.assertRaises(ValueError):
+            ArtifactRetentionPolicy(min_age_seconds=0)
+        with self.assertRaises(ValueError):
+            ArtifactRetentionPolicy(max_candidates=True)
+
     def test_gc_dry_run_rejects_invalid_scan_limit(self):
         with self.assertRaises(ValueError):
             self.index.dry_run_gc(max_scan_objects=0)
