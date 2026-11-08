@@ -10,7 +10,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Mapping, Protocol
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
@@ -88,6 +89,88 @@ class GitHubActionsJWKSProvider:
         if not 1 <= len(value["keys"]) <= 32:
             raise OIDCVerificationError("GitHub JWKS key count exceeds bounds")
         return value
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+class GitHubActionsOIDCTokenProvider:
+    """Acquire a short-lived token only from the runner-provided OIDC endpoint."""
+
+    def __init__(
+        self,
+        audience: str,
+        *,
+        environ: Mapping[str, str] | None = None,
+        timeout_seconds: float = 3.0,
+        opener=None,
+    ) -> None:
+        if not isinstance(audience, str) or not audience or len(audience) > 256:
+            raise ValueError("audience must be 1..256 characters")
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 10:
+            raise ValueError("timeout_seconds must be in (0, 10]")
+        self._audience = audience
+        self._environ = environ
+        self._timeout = float(timeout_seconds)
+        self._opener = opener or urllib.request.build_opener(_NoRedirectHandler())
+
+    def acquire(self) -> str:
+        import os
+
+        environment = os.environ if self._environ is None else self._environ
+        endpoint = environment.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+        bearer = environment.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+        if not isinstance(endpoint, str) or not isinstance(bearer, str) or not endpoint or not bearer:
+            raise OIDCVerificationError("GitHub Actions OIDC request credentials are unavailable")
+
+        parsed = urlsplit(endpoint)
+        if (
+            parsed.scheme != "https" or not parsed.hostname or parsed.username
+            or parsed.password or parsed.fragment or len(endpoint) > 4096
+        ):
+            raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise OIDCVerificationError("invalid GitHub Actions OIDC request endpoint") from exc
+        query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=False)
+        if any(key == "audience" for key, _ in query):
+            raise OIDCVerificationError("OIDC request endpoint already contains an audience")
+        query.append(("audience", self._audience))
+        request_url = urlunsplit((
+            parsed.scheme, parsed.netloc, parsed.path, urlencode(query), "",
+        ))
+        request = urllib.request.Request(
+            request_url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {bearer}",
+                "User-Agent": "dorker-agent-lab",
+            },
+            method="GET",
+        )
+        try:
+            with self._opener.open(request, timeout=self._timeout) as response:
+                if response.geturl() != request_url:
+                    raise OIDCVerificationError("OIDC token endpoint redirected unexpectedly")
+                raw = response.read(32 * 1024 + 1)
+        except OIDCVerificationError:
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise OIDCVerificationError("GitHub Actions OIDC token request failed") from exc
+        if len(raw) > 32 * 1024:
+            raise OIDCVerificationError("OIDC token response exceeds size limit")
+        value = _strict_json(raw)
+        if not isinstance(value, dict):
+            raise OIDCVerificationError("invalid GitHub Actions OIDC response")
+        token = value.get("value")
+        if not isinstance(token, str) or not token or len(token) > _MAX_TOKEN_BYTES:
+            raise OIDCVerificationError("invalid GitHub Actions OIDC token response")
+        if len(token.split(".")) != 3:
+            raise OIDCVerificationError("GitHub Actions response did not contain a JWT")
+        return token
 
 
 class GitHubActionsOIDCVerifier:
