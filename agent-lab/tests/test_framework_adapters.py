@@ -7,7 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dorker_agent.capabilities import CapabilityPolicy
 from dorker_agent.framework_adapters import CrewAIAdapter, FrameworkExecutionError, LangChainAdapter
 from dorker_agent.tasks import TaskRequest
-from dorker_agent.execution import (\n    DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger, SQLiteExecutionStore,\n    ExecutionControl, ExecutionCancelledError, ExecutionDeadlineExceeded,\n)
+from dorker_agent.execution import (
+    DuplicateExecutionError, ExecutionState, InMemoryExecutionLedger, SQLiteExecutionStore,
+    ExecutionControl, ExecutionCancelledError, ExecutionDeadlineExceeded,
+)
 
 TASK = TaskRequest("Fix parser", "Parser fails on empty input.", "bug")
 
