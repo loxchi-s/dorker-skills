@@ -40,7 +40,6 @@ class ArtifactObjectInfo:
 
 
 @dataclass(frozen=True, slots=True)
-@dataclass(frozen=True, slots=True)
 class ArtifactRetentionPolicy:
     min_age_seconds: int = 7 * 24 * 60 * 60
     max_candidates: int = 100
@@ -61,6 +60,7 @@ class ArtifactDeletionPlan:
     approval_token: str
 
 
+@dataclass(frozen=True, slots=True)
 class ArtifactGCDryRun:
     scanned_objects: int
     referenced_objects: int
@@ -336,6 +336,18 @@ class SQLiteArtifactIndex:
                 "CREATE INDEX IF NOT EXISTS idx_artifacts_sha256 "
                 "ON artifact_manifests(sha256)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS artifact_audit_log (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_unix_ms INTEGER NOT NULL,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    approval_token TEXT,
+                    details_json TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL UNIQUE
+                )
+            """)
 
     @staticmethod
     def _manifest_id(manifest: ArtifactManifest) -> str:
@@ -483,6 +495,136 @@ class SQLiteArtifactIndex:
             cutoff_unix_ns=cutoff,
             approval_token=token,
         )
+
+    @staticmethod
+    def _audit_hash(payload: dict[str, object]) -> str:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def record_gc_plan(self, plan: ArtifactDeletionPlan, *, actor: str) -> str:
+        if not isinstance(plan, ArtifactDeletionPlan):
+            raise TypeError("plan must be an ArtifactDeletionPlan")
+        if not isinstance(actor, str) or not actor.strip() or len(actor) > 128:
+            raise ValueError("actor must be 1..128 non-whitespace characters")
+        details = {
+            "candidate_count": len(plan.candidates),
+            "total_bytes": plan.total_bytes,
+            "cutoff_unix_ns": plan.cutoff_unix_ns,
+            "candidates": [
+                {"sha256": item.sha256, "size_bytes": item.size_bytes}
+                for item in plan.candidates
+            ],
+        }
+        return self._append_audit_event(
+            actor=actor, action="gc_plan_created",
+            approval_token=plan.approval_token, details=details,
+        )
+
+    def record_gc_approval(
+        self, approval_token: str, *, actor: str, approved: bool,
+    ) -> str:
+        if not isinstance(approval_token, str) or not _DIGEST.fullmatch(approval_token):
+            raise ValueError("approval_token must be a lowercase 64-character hex digest")
+        if not isinstance(actor, str) or not actor.strip() or len(actor) > 128:
+            raise ValueError("actor must be 1..128 non-whitespace characters")
+        if not isinstance(approved, bool):
+            raise TypeError("approved must be bool")
+        with self._lock, closing(self._connect()) as db:
+            exists = db.execute(
+                "SELECT 1 FROM artifact_audit_log WHERE action='gc_plan_created' AND approval_token=? LIMIT 1",
+                (approval_token,),
+            ).fetchone()
+        if exists is None:
+            raise ValueError("approval token has no recorded GC plan")
+        return self._append_audit_event(
+            actor=actor,
+            action="gc_plan_approved" if approved else "gc_plan_rejected",
+            approval_token=approval_token,
+            details={"approved": approved},
+        )
+
+    def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer from 1 to 1000")
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
+                "details_json, previous_hash, event_hash FROM artifact_audit_log "
+                "ORDER BY sequence DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return [
+            {
+                "sequence": row["sequence"],
+                "timestamp_unix_ms": row["timestamp_unix_ms"],
+                "actor": row["actor"],
+                "action": row["action"],
+                "approval_token": row["approval_token"],
+                "details": json.loads(row["details_json"]),
+                "previous_hash": row["previous_hash"],
+                "event_hash": row["event_hash"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def verify_audit_log(self) -> bool:
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
+                "details_json, previous_hash, event_hash FROM artifact_audit_log "
+                "ORDER BY sequence"
+            ).fetchall()
+        previous = "0" * 64
+        for row in rows:
+            payload = {
+                "sequence": row["sequence"],
+                "timestamp_unix_ms": row["timestamp_unix_ms"],
+                "actor": row["actor"],
+                "action": row["action"],
+                "approval_token": row["approval_token"],
+                "details_json": row["details_json"],
+                "previous_hash": row["previous_hash"],
+            }
+            if row["previous_hash"] != previous:
+                return False
+            expected = self._audit_hash(payload)
+            if not hmac.compare_digest(expected, row["event_hash"]):
+                return False
+            previous = row["event_hash"]
+        return True
+
+    def _append_audit_event(
+        self, *, actor: str, action: str, approval_token: str | None,
+        details: dict[str, object],
+    ) -> str:
+        details_json = json.dumps(details, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        if len(details_json.encode("utf-8")) > 64 * 1024:
+            raise ValueError("audit event details exceed 64 KiB")
+        with self._lock, closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT sequence, event_hash FROM artifact_audit_log ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            previous_hash = row["event_hash"] if row else "0" * 64
+            sequence = (row["sequence"] + 1) if row else 1
+            timestamp = time.time_ns() // 1_000_000
+            payload = {
+                "sequence": sequence,
+                "timestamp_unix_ms": timestamp,
+                "actor": actor,
+                "action": action,
+                "approval_token": approval_token,
+                "details_json": details_json,
+                "previous_hash": previous_hash,
+            }
+            event_hash = self._audit_hash(payload)
+            db.execute(
+                "INSERT INTO artifact_audit_log "
+                "(sequence, timestamp_unix_ms, actor, action, approval_token, details_json, previous_hash, event_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (sequence, timestamp, actor, action, approval_token, details_json, previous_hash, event_hash),
+            )
+            db.commit()
+        return event_hash
 
     @staticmethod
     def _validate_artifact_id(artifact_id: str) -> str:
