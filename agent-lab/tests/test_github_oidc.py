@@ -21,6 +21,7 @@ _SHA256_DIGEST_INFO_PREFIX = bytes.fromhex("3031300d0609608648016503040201050004
 
 from dorker_agent.github_oidc import (
     GitHubActionsOIDCVerifier,
+    GitHubActionsOIDCTokenProvider,
     GitHubOIDCPolicy,
     OIDCVerificationError,
 )
@@ -72,6 +73,98 @@ def claims(**overrides):
     }
     value.update(overrides)
     return value
+
+
+class FakeHTTPResponse:
+    def __init__(self, body, final_url):
+        self._body = body
+        self._final_url = final_url
+        self.read_limit = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, limit):
+        self.read_limit = limit
+        return self._body
+
+    def geturl(self):
+        return self._final_url
+
+
+class FakeHTTPOpener:
+    def __init__(self, response):
+        self.response = response
+        self.request = None
+        self.timeout = None
+
+    def open(self, request, timeout):
+        self.request = request
+        self.timeout = timeout
+        return self.response
+
+
+class GitHubActionsOIDCTokenProviderTests(unittest.TestCase):
+    def setUp(self):
+        self.endpoint = "https://pipelines.actions.githubusercontent.com/oidc?api-version=2"
+        self.token = "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJnaXRodWIifQ.signature"
+        self.environment = {
+            "ACTIONS_ID_TOKEN_REQUEST_URL": self.endpoint,
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "runner-bootstrap-secret",
+        }
+
+    def test_requests_encoded_audience_and_returns_jwt_without_logging(self):
+        response = FakeHTTPResponse(
+            json.dumps({"value": self.token}).encode(), 
+            self.endpoint + "&audience=https%3A%2F%2Fexample.test%2Foidc",
+        )
+        opener = FakeHTTPOpener(response)
+        provider = GitHubActionsOIDCTokenProvider(
+            "https://example.test/oidc", environ=self.environment, opener=opener,
+        )
+        self.assertEqual(provider.acquire(), self.token)
+        self.assertIn("audience=https%3A%2F%2Fexample.test%2Foidc", opener.request.full_url)
+        self.assertEqual(opener.request.get_header("Authorization"), "Bearer runner-bootstrap-secret")
+        self.assertEqual(opener.timeout, 3.0)
+        self.assertEqual(response.read_limit, 32 * 1024 + 1)
+
+    def test_missing_credentials_fail_closed(self):
+        provider = GitHubActionsOIDCTokenProvider("aud", environ={})
+        with self.assertRaisesRegex(OIDCVerificationError, "credentials are unavailable"):
+            provider.acquire()
+
+    def test_rejects_insecure_or_malformed_endpoint(self):
+        for endpoint in ("http://example.test/token", "https://user:pass@example.test/token", "https://example.test/token#fragment"):
+            env = dict(self.environment, ACTIONS_ID_TOKEN_REQUEST_URL=endpoint)
+            with self.subTest(endpoint=endpoint):
+                provider = GitHubActionsOIDCTokenProvider("aud", environ=env, opener=FakeHTTPOpener(None))
+                with self.assertRaisesRegex(OIDCVerificationError, "invalid GitHub Actions OIDC request endpoint"):
+                    provider.acquire()
+
+    def test_rejects_preexisting_audience_parameter(self):
+        env = dict(self.environment, ACTIONS_ID_TOKEN_REQUEST_URL=self.endpoint + "&audience=other")
+        provider = GitHubActionsOIDCTokenProvider("aud", environ=env, opener=FakeHTTPOpener(None))
+        with self.assertRaisesRegex(OIDCVerificationError, "already contains an audience"):
+            provider.acquire()
+
+    def test_rejects_redirected_endpoint(self):
+        response = FakeHTTPResponse(b'{"value":"a.b.c"}', "https://attacker.test/steal")
+        opener = FakeHTTPOpener(response)
+        provider = GitHubActionsOIDCTokenProvider("aud", environ=self.environment, opener=opener)
+        with self.assertRaisesRegex(OIDCVerificationError, "redirected unexpectedly"):
+            provider.acquire()
+
+    def test_rejects_oversized_or_invalid_token_response(self):
+        cases = (b"x" * (32 * 1024 + 1), b'{"value":"not-a-jwt"}', b'{"value":""}')
+        for body in cases:
+            response = FakeHTTPResponse(body, self.endpoint + "&audience=aud")
+            provider = GitHubActionsOIDCTokenProvider("aud", environ=self.environment, opener=FakeHTTPOpener(response))
+            with self.subTest(body_size=len(body)):
+                with self.assertRaises(OIDCVerificationError):
+                    provider.acquire()
 
 
 class GitHubActionsOIDCVerifierTests(unittest.TestCase):
