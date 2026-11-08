@@ -7,6 +7,7 @@ from .framework_adapters import (
     LangChainAdapter,
 )
 from .tasks import TaskRequest
+from .execution import DuplicateExecutionError, ExecutionRecord, ExecutionState, InMemoryExecutionLedger
 
 __all__ = [
     "Agent",
@@ -16,4 +17,8 @@ __all__ = [
     "CrewAIAdapter",
     "LangChainAdapter",
     "FrameworkExecutionError",
+    "DuplicateExecutionError",
+    "ExecutionRecord",
+    "ExecutionState",
+    "InMemoryExecutionLedger",
 ]
