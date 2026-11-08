@@ -5,6 +5,22 @@
 **Design only.** No workflow is enabled by this document. The current CI workflow remains read-only with
 `contents: read`; it must not receive `id-token: write`. No artifact deletion API exists.
 
+## Private-repository approval path (GitHub Pro)
+
+GitHub Environment Required reviewers are not available for this private repository on the Pro plan.
+Do not change repository visibility to Public solely to obtain that feature.
+
+Use a pull-request review as the human approval gate instead:
+
+- A GC plan must be proposed in a dedicated pull request and include the canonical plan token and bounded candidate metadata.
+- Protect `main` with required pull-request reviews and required status checks; require CODEOWNERS review for GC policy, OIDC verifier, audit code, and workflow files.
+- The plan author and approving reviewer must be different immutable GitHub user IDs.
+- Treat the GitHub pull-request review record as the durable approval evidence; do not assume a runner-local SQLite database persists between workflow runs.
+- The approval workflow must validate the review event, PR author, reviewer, target branch, plan token, and plan contents before recording an audit decision.
+- Do not add `id-token: write` or any deletion capability until a cross-run persistence and audit design has been implemented and tested.
+
+The current code has a durable single-host SQLite audit index, but no GitHub Actions adapter that persists and reloads that index across separate runs. Therefore the PR-based approval workflow is a design requirement, not yet implemented. No approval workflow is enabled by this document.
+
 ## Security boundary
 
 The OIDC verifier must use a dedicated workflow identity, not the general CI workflow:
