@@ -56,6 +56,7 @@ class ContainerSandboxConfig:
     command: tuple[str, ...]
     allowed_mount_roots: tuple[str, ...] = ()
     mounts: tuple[Mount, ...] = ()
+    allow_host_mounts: bool = False
     user_uid: int = 10000
     user_gid: int = 10000
     memory_bytes: int = 512 * 1024 * 1024
@@ -84,6 +85,11 @@ class ContainerSandboxConfig:
             raise ValueError("cpu_limit must be a positive finite number")
         if not math.isfinite(self.cpu_limit) or self.cpu_limit <= 0:
             raise ValueError("cpu_limit must be a positive finite number")
+
+        if not isinstance(self.allow_host_mounts, bool):
+            raise ValueError("allow_host_mounts must be boolean")
+        if self.mounts and not self.allow_host_mounts:
+            raise ValueError("host mounts are disabled; set allow_host_mounts=True only for trusted inputs")
 
         roots = tuple(_absolute_path(p, "allowed mount root") for p in self.allowed_mount_roots)
         if len(set(roots)) != len(roots):
