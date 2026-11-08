@@ -74,7 +74,7 @@ class CrewAIAdapter:
         crew: CrewPort,
         *,
         policy: CapabilityPolicy = DEFAULT_POLICY,
-        ledger: InMemoryExecutionLedger | None = None,
+        ledger: InMemoryExecutionLedger | SQLiteExecutionStore | None = None,
     ) -> None:
         self._crew, self._policy, self._ledger = crew, policy, ledger
 
@@ -117,7 +117,7 @@ class LangChainAdapter:
         runnable: RunnablePort,
         *,
         policy: CapabilityPolicy = DEFAULT_POLICY,
-        ledger: InMemoryExecutionLedger | None = None,
+        ledger: InMemoryExecutionLedger | SQLiteExecutionStore | None = None,
     ) -> None:
         self._runnable, self._policy, self._ledger = runnable, policy, ledger
 
