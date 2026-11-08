@@ -83,5 +83,6 @@ Trail of Bits skills were not copied or adapted. Their reviewed workflows depend
 - Implemented: upstream attribution and license provenance in `THIRD_PARTY_NOTICES.md`.
 - Implemented: README links and candidate-registry adaptation metadata.
 - Runtime: remains disabled (`runtime_enabled: false`).
-- Tested: not yet verified by a fresh GitHub Actions run.
-- Validated: registry validator and tests have not yet been executed in this session.
+- Tested: GitHub Actions run [42474895889](https://github.com/loxchi-s/dorker-skills/actions/runs/42474895889) completed successfully on commit `3ad45414ae21d1edb1c400b16ff057986d7fc5a1`.
+- Validated: registry validator passed; registry tests passed (3 tests); Agent Lab tests passed (10 tests); Agent Lab compile check passed.
+- CI note: the preceding run exposed one pre-existing test expectation mismatch (`Fix the failing test` vs normalized input `Fix the unit test`). The assertion was corrected to match the actual trimmed input, and the subsequent full workflow passed.
