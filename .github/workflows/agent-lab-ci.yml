@@ -1,0 +1,42 @@
+name: Dorker Agent Lab CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent-lab/**"
+      - "tools/**"
+      - "catalog.json"
+      - ".github/workflows/agent-lab-ci.yml"
+  pull_request:
+    paths:
+      - "agent-lab/**"
+      - "tools/**"
+      - "catalog.json"
+      - ".github/workflows/agent-lab-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-lab-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate skill registry
+        run: python tools/validate_registry.py --root .
+      - name: Run registry tests
+        run: python -m unittest discover -s tests -v
+      - name: Run agent lab tests
+        run: python -m unittest discover -s agent-lab/tests -v
+      - name: Compile agent lab
+        run: python -m compileall -q agent-lab
