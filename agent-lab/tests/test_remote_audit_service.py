@@ -255,8 +255,8 @@ class RemoteAuditServiceTests(unittest.TestCase):
 
     def test_malformed_request_shapes_and_oversized_targets_fail_closed(self):
         cases = [
-            ("GET", "/v1/audit/events?limit=1&cursor=MQ&extra=x", {}, b""),
-            ("GET", "/" + "x" * 4096, {}, b""),
+            ("GET", "/v1/audit/events?limit=1&cursor=MQ&extra=x", {"Authorization": f"Bearer {self.creator}"}, b""),
+            ("GET", "/" + "x" * 4096, {"Authorization": f"Bearer {self.creator}"}, b""),
             ("GET", "/v1/audit/events", {"Authorization": 7}, b""),
             ("GET", "/v1/audit/events", {}, "not-bytes"),
         ]
