@@ -12,7 +12,7 @@ BEGIN
 END
 $$;
 
-ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
 
 -- Fail closed if a pre-existing role has unsafe memberships or object ownership.
 -- Do not silently mutate existing grants/ownership during a privilege migration.
