@@ -88,6 +88,8 @@ BEGIN
   END IF;
 END
 $audit_guard$;
+-- Normalize pre-existing direct schema grants before granting the minimum required privilege.
+REVOKE ALL ON SCHEMA remote_audit FROM remote_audit_app;
 GRANT USAGE ON SCHEMA remote_audit TO remote_audit_app;
 
 REVOKE ALL ON SCHEMA remote_audit FROM PUBLIC, anon, authenticated;
