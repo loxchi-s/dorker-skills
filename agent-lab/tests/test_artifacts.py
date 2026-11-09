@@ -323,7 +323,7 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         created_hash = self.index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-16")
         approved_hash = self.index.record_gc_approval(
             plan.approval_token, claim=github_claim(202, "approver"), approved=True,
-        , idempotency_key="contract-artifact-15")
+        idempotency_key="contract-artifact-15")
         events = self.index.list_audit_events()
         self.assertEqual([event["action"] for event in events], [
             "gc_plan_created", "gc_plan_approved",
@@ -348,11 +348,11 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             self.index.record_gc_plan(plan, claim=github_claim(202, "other"), idempotency_key="contract-artifact-13")
         self.index.record_gc_approval(
             plan.approval_token, claim=github_claim(202, "approver"), approved=True,
-        , idempotency_key="contract-artifact-12")
+        idempotency_key="contract-artifact-12")
         with self.assertRaisesRegex(ValueError, "already has a recorded decision"):
             self.index.record_gc_approval(
                 plan.approval_token, claim=github_claim(303, "another"), approved=False,
-            , idempotency_key="contract-artifact-11")
+            idempotency_key="contract-artifact-11")
         self.assertEqual(len(self.index.list_audit_events()), 2)
 
     def test_gc_audit_requires_distinct_verified_github_actor(self):
@@ -367,13 +367,13 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different GitHub actor"):
             self.index.record_gc_approval(
                 plan.approval_token, claim=github_claim(101, "creator"), approved=True,
-            , idempotency_key="contract-artifact-9")
+            idempotency_key="contract-artifact-9")
         with self.assertRaisesRegex(ValueError, "invalid test OIDC proof"):
             self.index.record_gc_approval(
                 plan.approval_token,
                 claim=GitHubActorClaim(202, "approver", "forged"),
                 approved=True,
-            , idempotency_key="contract-artifact-8")
+            idempotency_key="contract-artifact-8")
         self.assertEqual(len(self.index.list_audit_events()), 1)
 
     def test_gc_audit_fails_closed_without_identity_verifier(self):
