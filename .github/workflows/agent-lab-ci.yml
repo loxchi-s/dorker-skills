@@ -32,6 +32,7 @@ jobs:
           --health-retries 10
     env:
       DORKER_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/dorker_test
+      DORKER_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:postgres@localhost:5432/dorker_test
       DORKER_TEST_POSTGRES_ROLE: remote_audit_login
     timeout-minutes: 10
     steps:
