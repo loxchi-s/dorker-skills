@@ -84,10 +84,13 @@ class PostgresAuditRepository:
             "WHERE repository_id = %s ORDER BY sequence",
             (repository_id,),
         )
-        rows = cursor.fetchall()
         previous = _ZERO_HASH
+        count = 0
         try:
-            for expected, row in enumerate(rows, start=1):
+            # Stream rows rather than materializing the complete chain in memory.
+            for expected, row in enumerate(cursor, start=1):
+                if expected > self._max_events:
+                    return False
                 event = self._json_object(row["event_document"])
                 stored_hash = str(row["event_hash"]).strip()
                 if (
@@ -99,21 +102,38 @@ class PostgresAuditRepository:
                 ):
                     return False
                 previous = stored_hash
-        except (ValueError, TypeError, KeyError, RecursionError, AuditServiceError):
+                count = expected
+
+            cursor.execute(
+                "SELECT sequence, event_hash FROM remote_audit.heads WHERE repository_id = %s",
+                (repository_id,),
+            )
+            head = cursor.fetchone()
+            if count == 0:
+                return head is None
+            return bool(
+                head is not None
+                and int(head["sequence"]) == count
+                and str(head["event_hash"]).strip() == previous
+            )
+        except (ValueError, TypeError, KeyError, OverflowError, RecursionError, AuditServiceError):
             return False
 
-        cursor.execute(
-            "SELECT sequence, event_hash FROM remote_audit.heads WHERE repository_id = %s",
-            (repository_id,),
-        )
-        head = cursor.fetchone()
-        if not rows:
-            return head is None
-        return bool(
-            head is not None
-            and int(head["sequence"]) == len(rows)
-            and str(head["event_hash"]).strip() == previous
-        )
+    @staticmethod
+    def _rollback_quietly(conn) -> None:
+        try:
+            conn.rollback()
+        except Exception:
+            # Preserve the original transaction/connection failure.
+            pass
+
+    @staticmethod
+    def _close_quietly(conn) -> None:
+        try:
+            conn.close()
+        except Exception:
+            # Closing after commit must not turn a committed write into an apparent failure.
+            pass
 
     @staticmethod
     def _translate_database_error(exc: Exception, *, write: bool = False) -> AuditServiceError:
@@ -285,17 +305,15 @@ class PostgresAuditRepository:
             return event, False
         except AuditServiceError:
             if conn is not None:
-                conn.rollback()
+                self._rollback_quietly(conn)
             raise
         except Exception as exc:
             if conn is not None:
-                conn.rollback()
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
+                self._rollback_quietly(conn)
             raise self._translate_database_error(exc, write=True) from exc
         finally:
             if conn is not None:
-                conn.close()
+                self._close_quietly(conn)
 
     def _read(self, repository_id: int, query: str, params: tuple) -> list[dict[str, object]]:
         conn = None
@@ -315,7 +333,7 @@ class PostgresAuditRepository:
             raise self._translate_database_error(exc) from exc
         finally:
             if conn is not None:
-                conn.close()
+                self._close_quietly(conn)
 
     def lookup(self, repository_id: int, idempotency_key: str) -> dict[str, object] | None:
         rows = self._read(
