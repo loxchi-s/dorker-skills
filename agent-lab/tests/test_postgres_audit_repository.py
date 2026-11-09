@@ -70,11 +70,11 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 self.assertFalse(privileges["can_delete"])
                 self.assertTrue(privileges["can_update_head"])
                 cursor.execute(
-                    "SELECT bool_and(c.relrowsecurity) FROM pg_class c "
+                    "SELECT bool_and(c.relrowsecurity) AS all_rls_enabled FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = 'remote_audit' AND c.relkind = 'r'"
                 )
-                self.assertTrue(cursor.fetchone()[0])
+                self.assertTrue(cursor.fetchone()["all_rls_enabled"])
         finally:
             conn.rollback()
             conn.close()
