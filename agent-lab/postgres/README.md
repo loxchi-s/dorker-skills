@@ -24,7 +24,7 @@ The GitHub Actions workflow for the schema-contract commit completed successfull
 
 The schema is private and is not intended for direct browser access through PostgREST. The service-side adapter uses `remote_audit_login`, which inherits only the `remote_audit_app` privilege role. Its password is intentionally unset; provision it through a secure credential workflow before testing a live connection. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
 
-GitHub Actions secrets cannot be populated through this repository workflow. Add `SUPABASE_AUDIT_DSN` through GitHub repository Settings > Secrets and variables > Actions. A manual, read-only smoke workflow is available at `.github/workflows/supabase-audit-live-smoke.yml`; it checks direct-login identity, role flags, membership, least-privilege grants, RLS, and `PostgresAuditRepository.verify(0)`. It performs no writes. Do not paste credentials into chat.
+GitHub Actions secrets cannot be populated through this repository workflow. Add `SUPABASE_AUDIT_DSN` through GitHub repository Settings > Secrets and variables > Actions. A manual, read-only `live-supabase-smoke` job is included in `.github/workflows/agent-lab-ci.yml` and runs only when manually dispatched against `feat/postgres-audit-adapter`; it checks direct-login identity, role flags, membership, least-privilege grants, RLS, and `PostgresAuditRepository.verify(0)`. It performs no writes. Do not paste credentials into chat.
 
 ## Transaction contract for the adapter
 
