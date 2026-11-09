@@ -94,3 +94,28 @@ jobs:
           echo "DORKER_TEST_IMAGE=$IMAGE_ID" >> "$GITHUB_ENV"
       - name: Run real Docker daemon integration tests
         run: python -m unittest discover -s agent-lab/tests -p 'test_docker_integration.py' -v
+
+  live-supabase-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/postgres-audit-adapter'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: agent-lab
+    env:
+      SUPABASE_AUDIT_DSN: ${{ secrets.SUPABASE_AUDIT_DSN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Require protected connection secret
+        run: |
+          if [ -z "$SUPABASE_AUDIT_DSN" ]; then
+            echo "::error::Add SUPABASE_AUDIT_DSN in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+      - name: Install Agent Lab dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Verify direct-login identity, privileges, RLS, and adapter reads
+        run: python scripts/supabase_audit_smoke.py
