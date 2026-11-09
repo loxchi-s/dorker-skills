@@ -16,6 +16,7 @@ from dorker_agent.github_oidc import GitHubActionsOIDCVerifier, GitHubOIDCPolicy
 from dorker_agent.remote_audit import RemoteAuditHttpClient
 from dorker_agent.remote_audit_service import (
     AuthorizationResult,
+    VerifiedApprovalEvidence,
     InMemoryAuditRepository,
     RemoteAuditService,
 )
@@ -47,6 +48,18 @@ class TestIdentityVerifier:
         return actor
 
 
+class TestApprovalEvidenceVerifier:
+    def verify(self, *, envelope, repository_id, plan_token, decision, actor):
+        if envelope != {"proof": "test-only"}:
+            raise ValueError("invalid test evidence")
+        return VerifiedApprovalEvidence(
+            issuer="test-issuer", evidence_id=f"review-{actor.github_id}-{decision}",
+            repository_id=repository_id, plan_token=plan_token, decision=decision,
+            reviewer_actor_id=actor.github_id,
+            evidence_digest=hashlib.sha256(f"{plan_token}:{decision}:{actor.github_id}".encode()).hexdigest(),
+        )
+
+
 class TestAllowAuthorizationPolicy:
     def authorize(self, *, actor, operation, repository_id, plan_token):
         return AuthorizationResult(
@@ -64,6 +77,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
             identity_verifier=TestIdentityVerifier(),
             repository=self.repository,
             authorization_policy=TestAllowAuthorizationPolicy(),
+            approval_evidence_verifier=TestApprovalEvidenceVerifier(),
         )
         self.creator = fake_token(101, "creator")
         self.approver_a = fake_token(202, "approver-a")
@@ -73,6 +87,8 @@ class RemoteAuditServiceTests(unittest.TestCase):
         headers = {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        if method == "POST" and path == "/v1/audit/decisions" and isinstance(body, dict):
+            body = {**body, "evidence": {"proof": "test-only"}}
         raw = body if isinstance(body, bytes) else json.dumps(body).encode() if body is not None else b""
         status, response_headers, payload = self.service.handle(method, path, headers, raw)
         return status, json.loads(payload)
