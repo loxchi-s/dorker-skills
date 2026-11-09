@@ -4,7 +4,9 @@ import base64
 import hashlib
 import json
 import threading
+import tempfile
 import time
+from pathlib import Path
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,6 +20,7 @@ from dorker_agent.remote_audit_service import (
     AuthorizationResult,
     VerifiedApprovalEvidence,
     InMemoryAuditRepository,
+    SQLiteAuditRepository,
     RemoteAuditService,
 )
 
@@ -327,6 +330,113 @@ class RemoteAuditServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 503)
         self.assertEqual(json.loads(payload)["error"]["code"], "authorization_unavailable")
+
+    def test_sqlite_repository_survives_reopen_and_consumes_evidence_atomically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "remote-audit.sqlite3"
+            first_repo = SQLiteAuditRepository(database)
+            first_service = RemoteAuditService(
+                repository_id=1450173940, identity_verifier=TestIdentityVerifier(),
+                repository=first_repo, authorization_policy=TestAllowAuthorizationPolicy(),
+                approval_evidence_verifier=TestApprovalEvidenceVerifier(),
+            )
+            plan = self.make_plan()
+            status, _, payload = first_service.handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "durable-plan", "plan": plan}).encode(),
+            )
+            self.assertEqual(status, 200)
+            created = json.loads(payload)
+
+            second_repo = SQLiteAuditRepository(database)
+            second_service = RemoteAuditService(
+                repository_id=1450173940, identity_verifier=TestIdentityVerifier(),
+                repository=second_repo, authorization_policy=TestAllowAuthorizationPolicy(),
+                approval_evidence_verifier=TestApprovalEvidenceVerifier(),
+            )
+            status, _, payload = second_service.handle(
+                "GET", "/v1/audit/events?limit=10", {"Authorization": f"Bearer {self.creator}"}, b"",
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(len(json.loads(payload)["events"]), 1)
+
+            decision_body = {
+                "idempotency_key": "durable-decision", "approval_token": plan["approval_token"],
+                "decision": "approve", "evidence": {"proof": "test-only"},
+            }
+            status, _, payload = second_service.handle(
+                "POST", "/v1/audit/decisions", {"Authorization": f"Bearer {self.approver_a}"},
+                json.dumps(decision_body).encode(),
+            )
+            self.assertEqual(status, 200)
+            decision = json.loads(payload)
+            self.assertEqual(decision["sequence"], 2)
+
+            reopened = SQLiteAuditRepository(database)
+            self.assertTrue(reopened.verify(1450173940))
+            self.assertEqual(len(reopened.list_events(1450173940, 0, 10)), 2)
+            self.assertEqual(reopened.lookup(1450173940, "durable-plan")["event_hash"], created["event_hash"])
+
+            second_plan = self.make_plan(digest="b" * 64)
+            status, _, payload = first_service.handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "durable-plan-two", "plan": second_plan}).encode(),
+            )
+            self.assertEqual(status, 200)
+            replay_body = {
+                "idempotency_key": "durable-evidence-replay",
+                "approval_token": second_plan["approval_token"],
+                "decision": "approve", "evidence": {"proof": "test-only"},
+            }
+            status, _, payload = first_service.handle(
+                "POST", "/v1/audit/decisions", {"Authorization": f"Bearer {self.approver_a}"},
+                json.dumps(replay_body).encode(),
+            )
+            self.assertEqual(status, 409)
+            self.assertEqual(json.loads(payload)["error"]["code"], "approval_evidence_replayed")
+
+    def test_sqlite_repository_serializes_concurrent_terminal_decisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "race.sqlite3"
+            repositories = [SQLiteAuditRepository(database) for _ in range(2)]
+            services = [
+                RemoteAuditService(
+                    repository_id=1450173940, identity_verifier=TestIdentityVerifier(),
+                    repository=repository, authorization_policy=TestAllowAuthorizationPolicy(),
+                    approval_evidence_verifier=TestApprovalEvidenceVerifier(),
+                )
+                for repository in repositories
+            ]
+            plan = self.make_plan()
+            status, _, _ = services[0].handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "race-plan", "plan": plan}).encode(),
+            )
+            self.assertEqual(status, 200)
+            barrier = threading.Barrier(2)
+
+            def decide(index, actor, decision):
+                barrier.wait()
+                body = {
+                    "idempotency_key": f"race-{index}", "approval_token": plan["approval_token"],
+                    "decision": decision, "evidence": {"proof": "test-only"},
+                }
+                status, _, payload = services[index].handle(
+                    "POST", "/v1/audit/decisions", {"Authorization": f"Bearer {actor}"},
+                    json.dumps(body).encode(),
+                )
+                return status, json.loads(payload)
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = [
+                    pool.submit(decide, 0, self.approver_a, "approve"),
+                    pool.submit(decide, 1, self.approver_b, "reject"),
+                ]
+                outcomes = [future.result(timeout=10) for future in results]
+            self.assertEqual(sorted(status for status, _ in outcomes), [200, 409])
+            final_repo = SQLiteAuditRepository(database)
+            self.assertTrue(final_repo.verify(1450173940))
+            self.assertEqual(len(final_repo.list_events(1450173940, 0, 10)), 2)
 
     def test_health_reports_test_only_and_chain_readiness(self):
         status, health = self.request("GET", "/v1/audit/health", token=self.creator)
