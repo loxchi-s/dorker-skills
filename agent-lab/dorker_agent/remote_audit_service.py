@@ -303,6 +303,7 @@ class RemoteAuditService:
                 raise AuditServiceError(400, "invalid_request", "URL fragment is not allowed")
             path = parsed.path
             if method == "GET" and path == "/v1/audit/health":
+                self._authenticate(headers)
                 ready = self._repository.verify(self._repository_id)
                 return self._json(200, {
                     "ready": ready, "mode": "in-memory-test-only",
