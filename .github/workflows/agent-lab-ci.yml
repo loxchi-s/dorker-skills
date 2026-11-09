@@ -16,6 +16,22 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dorker_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dorker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DORKER_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/dorker_test
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +44,10 @@ jobs:
         run: python tools/validate_registry.py --root .
       - name: Run registry tests
         run: python -m unittest discover -s tests -v
+      - name: Prepare PostgreSQL test schema
+        run: |
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/001_remote_audit_schema.sql
       - name: Run agent lab tests
         run: python -m unittest discover -s agent-lab/tests -v
       - name: Compile agent lab
