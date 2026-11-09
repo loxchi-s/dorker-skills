@@ -15,6 +15,7 @@ from dorker_agent.artifacts import VerifiedGitHubActor
 from dorker_agent.github_oidc import GitHubActionsOIDCVerifier, GitHubOIDCPolicy
 from dorker_agent.remote_audit import RemoteAuditHttpClient
 from dorker_agent.remote_audit_service import (
+    AuthorizationResult,
     InMemoryAuditRepository,
     RemoteAuditService,
 )
@@ -46,6 +47,15 @@ class TestIdentityVerifier:
         return actor
 
 
+class TestAllowAuthorizationPolicy:
+    def authorize(self, *, actor, operation, repository_id, plan_token):
+        return AuthorizationResult(
+            allowed=True,
+            decision_id="test-allow",
+            policy_version="test-only-v1",
+        )
+
+
 class RemoteAuditServiceTests(unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryAuditRepository()
@@ -53,6 +63,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
             repository_id=1450173940,
             identity_verifier=TestIdentityVerifier(),
             repository=self.repository,
+            authorization_policy=TestAllowAuthorizationPolicy(),
         )
         self.creator = fake_token(101, "creator")
         self.approver_a = fake_token(202, "approver-a")
@@ -218,6 +229,57 @@ class RemoteAuditServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(page["events"]), 10)
         self.assertIsNotNone(page["next_cursor"])
+
+    def test_default_policy_denies_authenticated_operations_without_mutation(self):
+        service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=TestIdentityVerifier(),
+            repository=self.repository,
+        )
+        status, error = service.handle(
+            "GET", "/v1/audit/events",
+            {"Authorization": f"Bearer {self.creator}"}, b"",
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(error)["error"]["code"], "forbidden")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
+    def test_authorization_policy_exception_fails_closed(self):
+        class BrokenPolicy:
+            def authorize(self, **kwargs):
+                raise RuntimeError("policy backend unavailable")
+
+        service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=TestIdentityVerifier(),
+            repository=self.repository,
+            authorization_policy=BrokenPolicy(),
+        )
+        status, payload = service.handle(
+            "GET", "/v1/audit/events",
+            {"Authorization": f"Bearer {self.creator}"}, b"",
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(payload)["error"]["code"], "authorization_unavailable")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
+    def test_malformed_authorization_result_fails_closed(self):
+        class MalformedPolicy:
+            def authorize(self, **kwargs):
+                return {"allowed": True}
+
+        service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=TestIdentityVerifier(),
+            repository=self.repository,
+            authorization_policy=MalformedPolicy(),
+        )
+        status, payload = service.handle(
+            "GET", "/v1/audit/events",
+            {"Authorization": f"Bearer {self.creator}"}, b"",
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(payload)["error"]["code"], "authorization_unavailable")
 
     def test_health_reports_test_only_and_chain_readiness(self):
         status, health = self.request("GET", "/v1/audit/health", token=self.creator)
