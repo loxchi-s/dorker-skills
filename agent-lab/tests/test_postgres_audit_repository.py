@@ -58,17 +58,17 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             with conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT current_user, "
-                    "has_table_privilege(current_user, 'remote_audit.events', 'SELECT'), "
-                    "has_table_privilege(current_user, 'remote_audit.events', 'INSERT'), "
-                    "has_table_privilege(current_user, 'remote_audit.events', 'DELETE'), "
-                    "has_table_privilege(current_user, 'remote_audit.heads', 'UPDATE')"
+                    "has_table_privilege(current_user, 'remote_audit.events', 'SELECT') AS can_select, "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'INSERT') AS can_insert, "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'DELETE') AS can_delete, "
+                    "has_table_privilege(current_user, 'remote_audit.heads', 'UPDATE') AS can_update_head"
                 )
-                role, can_select, can_insert, can_delete, can_update_head = cursor.fetchone()
-                self.assertEqual(role, "remote_audit_app")
-                self.assertTrue(can_select)
-                self.assertTrue(can_insert)
-                self.assertFalse(can_delete)
-                self.assertTrue(can_update_head)
+                privileges = cursor.fetchone()
+                self.assertEqual(privileges["current_user"], "remote_audit_app")
+                self.assertTrue(privileges["can_select"])
+                self.assertTrue(privileges["can_insert"])
+                self.assertFalse(privileges["can_delete"])
+                self.assertTrue(privileges["can_update_head"])
                 cursor.execute(
                     "SELECT bool_and(c.relrowsecurity) FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
