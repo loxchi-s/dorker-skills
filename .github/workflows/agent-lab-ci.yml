@@ -31,7 +31,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DORKER_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/dorker_test
+      DORKER_TEST_POSTGRES_DSN: postgresql://remote_audit_login:ci-only-password@localhost:5432/dorker_test
       DORKER_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:postgres@localhost:5432/dorker_test
       DORKER_TEST_POSTGRES_ROLE: remote_audit_login
     timeout-minutes: 10
@@ -54,7 +54,7 @@ jobs:
           # Reapply both migrations to verify safe idempotent reruns.
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/001_remote_audit_schema.sql
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
-          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE remote_audit_login NOLOGIN INHERIT; GRANT remote_audit_app TO remote_audit_login;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE remote_audit_login LOGIN INHERIT PASSWORD 'ci-only-password'; GRANT remote_audit_app TO remote_audit_login;"
       - name: Run agent lab tests
         run: python -m unittest discover -s agent-lab/tests -v
       - name: Compile agent lab
