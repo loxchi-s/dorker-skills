@@ -8,8 +8,10 @@ import base64
 import copy
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 import threading
 import uuid
 from pathlib import Path
@@ -356,6 +358,14 @@ class SQLiteAuditRepository:
         self._max_events = max_events
         self._busy_timeout_ms = busy_timeout_ms
         Path(raw).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(raw, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            info = os.lstat(raw)
+            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+                raise ValueError("SQLite database must be a regular file with owner-only permissions")
+        else:
+            os.close(fd)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -437,17 +447,20 @@ class SQLiteAuditRepository:
             (repository_id,),
         ).fetchall()
         previous = _ZERO_HASH
-        for expected, row in enumerate(rows, start=1):
-            event = self._decode_event(row)
-            if (
-                row["sequence"] != expected
-                or event.get("sequence") != expected
-                or event.get("previous_hash") != previous
-                or event.get("event_hash") != row["event_hash"]
-                or row["event_hash"] != _event_hash(event)
-            ):
-                return False
-            previous = str(row["event_hash"])
+        try:
+            for expected, row in enumerate(rows, start=1):
+                event = self._decode_event(row)
+                if (
+                    row["sequence"] != expected
+                    or event.get("sequence") != expected
+                    or event.get("previous_hash") != previous
+                    or event.get("event_hash") != row["event_hash"]
+                    or row["event_hash"] != _event_hash(event)
+                ):
+                    return False
+                previous = str(row["event_hash"])
+        except (ValueError, TypeError, RecursionError, AuditServiceError):
+            return False
         return True
 
     def append(
@@ -569,6 +582,9 @@ class SQLiteAuditRepository:
         except sqlite3.IntegrityError as exc:
             db.rollback()
             raise AuditServiceError(409, "transaction_conflict", "audit uniqueness constraint rejected the write") from exc
+        except sqlite3.DatabaseError as exc:
+            db.rollback()
+            raise AuditServiceError(503, "repository_unavailable", "audit repository transaction failed", retryable=True) from exc
         except Exception:
             db.rollback()
             raise
@@ -585,6 +601,8 @@ class SQLiteAuditRepository:
                 (repository_id, idempotency_key),
             ).fetchone()
             return self._decode_event(row) if row else None
+        except sqlite3.DatabaseError as exc:
+            raise AuditServiceError(503, "repository_unavailable", "audit repository read failed", retryable=True) from exc
         finally:
             db.close()
 
@@ -603,6 +621,8 @@ class SQLiteAuditRepository:
                 (repository_id, limit, offset),
             ).fetchall()
             return [self._decode_event(row) for row in rows]
+        except sqlite3.DatabaseError as exc:
+            raise AuditServiceError(503, "repository_unavailable", "audit repository read failed", retryable=True) from exc
         finally:
             db.close()
 
@@ -610,6 +630,8 @@ class SQLiteAuditRepository:
         db = self._connect()
         try:
             return self._verify_connection(db, repository_id)
+        except sqlite3.DatabaseError as exc:
+            raise AuditServiceError(503, "repository_unavailable", "audit repository verification failed", retryable=True) from exc
         finally:
             db.close()
 
