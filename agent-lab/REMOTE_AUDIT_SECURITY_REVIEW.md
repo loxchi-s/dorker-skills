@@ -88,3 +88,8 @@ ASR-01 remains OPEN / PARTIALLY MITIGATED: no real actor grants are configured; 
 ## Approval evidence enforcement update (2026-11-09)
 
 The reference service now requires an injected approval evidence verifier for terminal decisions; the default verifier denies. Verified results are checked against repository, plan token, decision, and authenticated actor. Evidence metadata and authorization decision/version are included in the event hash; proof material is excluded. The in-memory repository consumes issuer/evidence ID under its process-local transaction lock and rejects reuse. This is contract-test coverage only: the test verifier is not cryptographic, and replay protection is not durable or cross-process. ASR-03 remains a critical blocker; production approval remains prohibited until a transactional adapter and independently reviewed provider verifier pass conformance tests.
+
+
+## SQLite adapter update (2026-11-09)
+
+The in-memory-only limitation is partly mitigated by a new `SQLiteAuditRepository` reference adapter. It uses a file-backed database, `BEGIN IMMEDIATE`, and unique constraints to atomically persist events, idempotency, plans, terminal decisions, and consumed evidence. Reopen/replay and independent-connection concurrency tests are added. This is single-host persistence only and does not satisfy the remote/cross-run durability requirement. ASR-03 remains a production blocker until a managed transactional adapter, external integrity checkpoints, backup/restore, and independent-run conformance tests are completed. The module remains a test harness, not an approved service.
