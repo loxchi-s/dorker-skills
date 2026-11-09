@@ -54,20 +54,35 @@ BEGIN
   END IF;
 
   IF EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'remote_audit'
-      AND (
-        policyname NOT IN (
-          'remote_audit_app_events_select', 'remote_audit_app_events_insert',
-          'remote_audit_app_heads_select', 'remote_audit_app_heads_insert',
-          'remote_audit_app_heads_update', 'remote_audit_app_plans_select',
-          'remote_audit_app_plans_insert', 'remote_audit_app_decisions_select',
-          'remote_audit_app_decisions_insert', 'remote_audit_app_evidence_select',
-          'remote_audit_app_evidence_insert'
-        )
-        OR roles <> ARRAY['remote_audit_app']::name[]
+    SELECT 1
+    FROM pg_policies p
+    WHERE p.schemaname = 'remote_audit'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM (VALUES
+          ('events'::name, 'remote_audit_app_events_select'::name, 'SELECT'::text, 'true'::text, NULL::text),
+          ('events'::name, 'remote_audit_app_events_insert'::name, 'INSERT'::text, NULL::text, 'true'::text),
+          ('heads'::name, 'remote_audit_app_heads_select'::name, 'SELECT'::text, 'true'::text, NULL::text),
+          ('heads'::name, 'remote_audit_app_heads_insert'::name, 'INSERT'::text, NULL::text, 'true'::text),
+          ('heads'::name, 'remote_audit_app_heads_update'::name, 'UPDATE'::text, 'true'::text, 'true'::text),
+          ('plans'::name, 'remote_audit_app_plans_select'::name, 'SELECT'::text, 'true'::text, NULL::text),
+          ('plans'::name, 'remote_audit_app_plans_insert'::name, 'INSERT'::text, NULL::text, 'true'::text),
+          ('decisions'::name, 'remote_audit_app_decisions_select'::name, 'SELECT'::text, 'true'::text, NULL::text),
+          ('decisions'::name, 'remote_audit_app_decisions_insert'::name, 'INSERT'::text, NULL::text, 'true'::text),
+          ('consumed_evidence'::name, 'remote_audit_app_evidence_select'::name, 'SELECT'::text, 'true'::text, NULL::text),
+          ('consumed_evidence'::name, 'remote_audit_app_evidence_insert'::name, 'INSERT'::text, NULL::text, 'true'::text)
+        ) AS expected(tablename, policyname, cmd, qual, with_check)
+        WHERE p.tablename = expected.tablename
+          AND p.policyname = expected.policyname
+          AND p.cmd = expected.cmd
+          AND p.permissive = 'PERMISSIVE'
+          AND p.roles = ARRAY['remote_audit_app']::name[]
+          AND p.qual IS NOT DISTINCT FROM expected.qual
+          AND p.with_check IS NOT DISTINCT FROM expected.with_check
       )
-  ) THEN
+  ) OR (
+    SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'remote_audit'
+  ) <> 11 THEN
     RAISE EXCEPTION
       'unexpected remote_audit RLS policy exists; review it before applying app-role policies';
   END IF;
