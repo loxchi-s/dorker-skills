@@ -66,6 +66,15 @@ jobs:
           fi
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DROP POLICY unexpected_public_policy ON remote_audit.events;"
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          # Unsafe role membership must fail closed and roll back role-attribute normalization.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE remote_audit_parent NOLOGIN; GRANT remote_audit_parent TO remote_audit_app; ALTER ROLE remote_audit_app LOGIN SUPERUSER;"
+          if PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql; then
+            echo "Migration unexpectedly accepted an unsafe role membership" >&2
+            exit 1
+          fi
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE can_login boolean; is_super boolean; BEGIN SELECT rolcanlogin, rolsuper INTO can_login, is_super FROM pg_roles WHERE rolname = 'remote_audit_app'; IF NOT can_login OR NOT is_super THEN RAISE EXCEPTION 'failed migration did not roll back role attribute changes'; END IF; END \$\$;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "REVOKE remote_audit_parent FROM remote_audit_app; ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER; DROP ROLE remote_audit_parent;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE remote_audit_login LOGIN INHERIT PASSWORD 'ci-only-password'; GRANT remote_audit_app TO remote_audit_login;"
       - name: Run agent lab tests
         run: python -m unittest discover -s agent-lab/tests -v
