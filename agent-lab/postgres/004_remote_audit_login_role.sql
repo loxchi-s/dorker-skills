@@ -21,9 +21,10 @@ DECLARE
 BEGIN
   SELECT oid, rolcanlogin, rolinherit, rolsuper, rolcreatedb,
          rolcreaterole, rolreplication, rolbypassrls
-    INTO login_oid, login_role
+    INTO login_role
   FROM pg_roles
   WHERE rolname = 'remote_audit_login';
+  login_oid := login_role.oid;
 
   IF NOT FOUND OR NOT login_role.rolcanlogin OR NOT login_role.rolinherit
      OR login_role.rolsuper OR login_role.rolcreatedb
