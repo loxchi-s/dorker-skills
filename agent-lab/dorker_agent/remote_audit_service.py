@@ -216,6 +216,8 @@ def _validate_plan(value: object) -> tuple[str, dict[str, object]]:
 class InMemoryAuditRepository:
     """Lock-serialized repository double; state is lost when the process exits."""
 
+    mode = "in-memory-test-only"
+
     def __init__(self, *, max_events: int = _MAX_EVENTS) -> None:
         if isinstance(max_events, bool) or not isinstance(max_events, int) or max_events < 1:
             raise ValueError("max_events must be a positive integer")
