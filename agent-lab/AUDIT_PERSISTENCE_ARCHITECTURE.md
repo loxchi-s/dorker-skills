@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed architecture; not implemented.** The current `SQLiteArtifactIndex` is a durable single-host index. It uses SQLite transactions and a local hash chain, but a GitHub-hosted runner is ephemeral: a database file created by one run is not available to the next run unless explicitly transferred. Workflow artifacts and Actions caches are not the authoritative audit database.
+**Partially implemented; remote persistence remains proposed.** `AuditStore` now defines a provider-neutral Python protocol for the existing GC plan, decision, event-read, and chain-verification operations. `SQLiteArtifactIndex` structurally satisfies this v1 protocol and is covered by local conformance tests. It remains a durable single-host index: a GitHub-hosted runner is ephemeral, so a database file created by one run is not available to the next run. Workflow artifacts and Actions caches are not the authoritative audit database.
 
 No provider, credentials, database, workflow, or repository permission is configured by this document. The GC workflow remains disabled, CI remains read-only, and artifact deletion remains unavailable.
 
@@ -11,6 +11,8 @@ No provider, credentials, database, workflow, or repository permission is config
 Use a **transactional remote audit store** behind a narrow `AuditStore` interface. The production implementation should use a managed PostgreSQL-compatible database reached through a small, authenticated audit service or a provider-supported workload-identity flow. Do not connect a runner using a long-lived database password, and do not assume a GitHub OIDC token is itself a database credential.
 
 Keep SQLite as a local development/test adapter only. Do not attempt to synchronize SQLite files between runners, and do not use GitHub Actions artifacts, caches, workflow logs, or repository commits as the authoritative mutable ledger.
+
+The current protocol is an adapter seam, not a complete remote transaction contract: its v1 methods do not accept idempotency keys. Do not implement or deploy a remote adapter against v1 until the idempotency and ambiguous-commit semantics below are represented in the interface and tests.
 
 The provider and hosting account are deliberately undecided. Select one only after reviewing trust boundaries, supported federated identity, transaction guarantees, backup/restore, retention, and cost. This document does not authorize provisioning a service or incurring cost.
 
@@ -73,8 +75,8 @@ The runner must receive only the minimum short-lived permission needed to call t
 
 ## Implementation sequence
 
-1. Define a provider-neutral `AuditStore` protocol and conformance tests.
-2. Keep the SQLite adapter for local tests; test restart/reopen, transaction rollback, concurrent writers, idempotent retry, duplicate decision, and chain verification.
+1. **Completed (v1 scope):** define a provider-neutral `AuditStore` protocol and SQLite conformance tests for structural compatibility, restart/reopen, append/read/verify, duplicate plan/decision rejection, distinct-actor approval, and concurrent terminal decisions.
+2. **Still required before remote use:** add caller-supplied idempotency keys and same-key/same-payload replay semantics; test ambiguous-commit recovery and transaction rollback. The current v1 interface does not expose idempotency keys and is not a production remote-store contract.
 3. Select a managed provider only after explicit approval; implement the remote service and database schema with transactional constraints.
 4. Add cross-run integration tests using two independent runner invocations and verify that the second can read and extend the first run's audit state.
 5. Add external signed checkpoints, backup/restore drills, monitoring, and documented RPO/RTO.
