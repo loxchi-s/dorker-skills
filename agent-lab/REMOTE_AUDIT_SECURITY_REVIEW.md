@@ -65,7 +65,7 @@ These changes harden the test reference; they do not close the production blocke
 
 ## Verification status
 
-- CI run: pending for the latest review commits at document creation.
+- GitHub Actions run #245: registry validation/tests, Agent Lab tests, compile, and Docker integration all passed.
 - No live HTTP server, reverse proxy, rate limiter, durable database, multi-process race test, or production OIDC/JWKS integration was exercised.
 - No provider, infrastructure, credential, workflow permission, or artifact deletion was added.
 
