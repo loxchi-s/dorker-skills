@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-**Contract + client + in-memory reference implementation.** PR #13 implements a provider-neutral HTTP client and a WSGI-compatible service reference backed only by a lock-serialized in-memory repository. The service tests exercise request validation, injected identity verification, idempotency, terminal-decision races, event pagination, and canonical hash-chain verification. This is a test harness: state is lost on process exit; it is not a durable store, deployed service, or production security boundary. The SQLite adapter remains the only durable implementation. No provider is selected, infrastructure provisioned, OIDC permission granted, or workflow enabled.
+**Contract + client + in-memory and SQLite reference repositories.** PR #13 implements a provider-neutral HTTP client and a WSGI-compatible service reference. `InMemoryAuditRepository` remains the fast process-local test double. `SQLiteAuditRepository` adds a durable single-host file-backed adapter using SQLite `BEGIN IMMEDIATE`, uniqueness constraints for repository-scoped idempotency, one terminal decision per plan, and one-time evidence consumption. Tests cover database reopen, same-key replay/conflict, evidence replay after reopen, and concurrent terminal decisions through independent repository connections. This does not establish remote/cross-run durability, backup/restore, external checkpoints, production deployment, or production security. No provider is selected, infrastructure provisioned, OIDC permission granted, or workflow enabled.
 
 The service is the authority for audit state. A runner must never report success from a local cache or SQLite fallback.
 
