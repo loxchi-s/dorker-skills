@@ -134,26 +134,27 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
 
 
     def test_paginates_events_and_verifies_contiguous_chain(self):
-        first_hash = "1" * 64
-        second_hash = "2" * 64
         calls = []
         def event(sequence, previous, digest, event_id):
-            return {
+            item = {
                 "sequence": sequence, "event_id": event_id,
                 "event_type": "gc_plan_created", "actor_id": 123,
                 "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
                 "details": {}, "idempotency_key": f"key-{sequence}",
-                "previous_hash": previous, "event_hash": digest,
+                "request_hash": "a" * 64, "previous_hash": previous,
+                "event_hash": "",
             }
+            item["event_hash"] = RemoteAuditHttpClient.compute_event_hash(item)
+            return item
         def transport(method, url, headers, body, timeout):
             calls.append(url)
             if len(calls) == 1:
                 return HttpResponse(200, json.dumps({
-                    "events": [event(1, "0" * 64, first_hash, "evt-1")],
+                    "events": [event(1, "0" * 64, "", "evt-1")],
                     "next_cursor": "cursor/one",
                 }).encode())
             return HttpResponse(200, json.dumps({
-                "events": [event(2, first_hash, second_hash, "evt-2")],
+                "events": [event(2, event(1, "0" * 64, "", "evt-1")["event_hash"], "", "evt-2")],
                 "next_cursor": None,
             }).encode())
         client, _ = self.make_client(transport)
@@ -163,13 +164,16 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
 
     def test_rejects_sequence_gap_and_broken_previous_hash(self):
         def event(sequence, previous, digest, event_id):
-            return {
+            item = {
                 "sequence": sequence, "event_id": event_id,
                 "event_type": "gc_plan_created", "actor_id": 123,
                 "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
                 "details": {}, "idempotency_key": f"key-{sequence}",
-                "previous_hash": previous, "event_hash": digest,
+                "request_hash": "a" * 64, "previous_hash": previous,
+                "event_hash": "",
             }
+            item["event_hash"] = RemoteAuditHttpClient.compute_event_hash(item)
+            return item
         first = event(1, "0" * 64, "1" * 64, "evt-1")
         with self.assertRaises(AuditClientError):
             RemoteAuditHttpClient.verify_event_chain([
@@ -182,17 +186,20 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
 
     def test_rejects_checkpoint_head_mismatch_and_duplicate_event_id(self):
         def event(sequence, previous, digest, event_id):
-            return {
+            item = {
                 "sequence": sequence, "event_id": event_id,
                 "event_type": "gc_plan_created", "actor_id": 123,
                 "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
                 "details": {}, "idempotency_key": f"key-{sequence}",
-                "previous_hash": previous, "event_hash": digest,
+                "request_hash": "a" * 64, "previous_hash": previous,
+                "event_hash": "",
             }
+            item["event_hash"] = RemoteAuditHttpClient.compute_event_hash(item)
+            return item
         first = event(1, "0" * 64, "1" * 64, "evt-1")
         with self.assertRaises(AuditClientError):
             RemoteAuditHttpClient.verify_event_chain([first], expected_head_hash="f" * 64)
-        duplicate = event(2, "1" * 64, "2" * 64, "evt-1")
+        duplicate = event(2, first["event_hash"], "2" * 64, "evt-1")
         with self.assertRaises(AuditClientError):
             RemoteAuditHttpClient.verify_event_chain([first, duplicate])
 
