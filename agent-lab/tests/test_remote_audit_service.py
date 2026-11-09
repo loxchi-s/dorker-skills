@@ -246,6 +246,36 @@ class RemoteAuditServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 413)
 
+
+    def test_malformed_request_shapes_and_oversized_targets_fail_closed(self):
+        cases = [
+            ("GET", "/v1/audit/events?limit=1&cursor=MQ&extra=x", {}, b""),
+            ("GET", "/" + "x" * 4096, {}, b""),
+            ("GET", "/v1/audit/events", {"Authorization": 7}, b""),
+            ("GET", "/v1/audit/events", {}, "not-bytes"),
+        ]
+        for method, target, headers, body in cases:
+            status, payload_headers, payload = self.service.handle(method, target, headers, body)
+            self.assertEqual(status, 400)
+            self.assertEqual(json.loads(payload)["error"]["code"], "invalid_request")
+
+    def test_invalid_base64url_bearer_segment_is_rejected_before_verifier(self):
+        token = self.creator.split(".")
+        token[1] += "!"
+        status, error = self.request("GET", "/v1/audit/events", token=".".join(token))
+        self.assertEqual(status, 401)
+        self.assertEqual(error["error"]["code"], "unauthenticated")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
+    def test_deeply_nested_json_is_rejected_without_worker_exception(self):
+        raw = b'{"idempotency_key":"deep","plan":' + b"[" * 2000 + b"0" + b"]" * 2000 + b"}"
+        status, headers, payload = self.service.handle(
+            "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"}, raw,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(payload)["error"]["code"], "invalid_request")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
     def test_wsgi_adapter(self):
         import io
         body = json.dumps({
