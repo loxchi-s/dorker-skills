@@ -16,7 +16,7 @@ ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERI
 
 -- Fail closed if a pre-existing role has unsafe memberships or object ownership.
 -- Do not silently mutate existing grants/ownership during a privilege migration.
-DO $
+DO $audit_guard$
 DECLARE
   app_role_oid oid;
 BEGIN
@@ -45,7 +45,7 @@ BEGIN
       'remote_audit_app must not own the audit schema or its objects';
   END IF;
 END
-$;
+$audit_guard$;
 GRANT USAGE ON SCHEMA remote_audit TO remote_audit_app;
 
 REVOKE ALL ON SCHEMA remote_audit FROM PUBLIC, anon, authenticated;
