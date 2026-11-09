@@ -345,9 +345,10 @@ class RemoteAuditService:
                     raise AuditServiceError(400, "invalid_request", "limit must be 1..1000")
                 cursor = query.get("cursor", [None])[0]
                 offset = self._decode_cursor(cursor)
-                events = self._repository.list_events(self._repository_id, offset, int(raw_limit))
+                events = self._repository.list_events(self._repository_id, offset, int(raw_limit) + 1)
                 next_cursor = None
-                if len(events) == int(raw_limit):
+                if len(events) > int(raw_limit):
+                    events = events[:int(raw_limit)]
                     next_cursor = self._encode_cursor(offset + len(events))
                 return self._json(200, {"events": events, "next_cursor": next_cursor})
             raise AuditServiceError(404, "not_found", "endpoint was not found")
