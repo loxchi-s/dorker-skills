@@ -188,3 +188,8 @@ The suite must run against a real transactional adapter before any remote-use cl
 ## Non-goals
 
 No provider selection, infrastructure provisioning, database creation, workflow activation, OIDC permission change, artifact deletion, or production credential configuration.
+
+
+## Adversarial security review
+
+See [REMOTE_AUDIT_SECURITY_REVIEW.md](REMOTE_AUDIT_SECURITY_REVIEW.md). The review identifies unresolved production blockers: per-actor authorization and independent approval evidence, authenticated pagination cursors, durable transactional storage, request rate/deadline controls, and explicit audit-reader authorization. The in-memory reference is not approved for production or privileged artifact-GC use.
