@@ -66,13 +66,25 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                     "WHERE n.nspname = 'remote_audit' AND owner_role.rolname = current_user) "
                     "AS not_table_owner, "
                     "pg_has_role(current_user, 'remote_audit_app', 'MEMBER') AS is_member, "
+                    "(SELECT COUNT(*) = 1 FROM pg_auth_members m "
+                    "JOIN pg_roles granted_role ON granted_role.oid = m.roleid "
+                    "JOIN pg_roles member_role ON member_role.oid = m.member "
+                    "WHERE member_role.rolname = current_user "
+                    "AND granted_role.rolname = 'remote_audit_app') AS only_expected_membership, "
+                    "NOT EXISTS (SELECT 1 FROM pg_auth_members m "
+                    "WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = 'remote_audit_app')) "
+                    "AS app_role_has_no_parent_roles, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'SELECT') AS can_select, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'INSERT') AS can_insert, "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'UPDATE') AS can_update_events, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'DELETE') AS can_delete, "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'TRUNCATE') AS can_truncate, "
                     "has_table_privilege(current_user, 'remote_audit.heads', 'UPDATE') AS can_update_head, "
+                    "has_schema_privilege(current_user, 'remote_audit', 'CREATE') AS can_create_in_schema, "
                     "(SELECT NOT rolinherit AND NOT rolcanlogin AND NOT rolsuper "
-                    "AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolbypassrls "
-                    "FROM pg_roles WHERE rolname = 'remote_audit_app') AS app_role_restricted, "
+                    "AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication "
+                    "AND NOT rolbypassrls FROM pg_roles "
+                    "WHERE rolname = 'remote_audit_app') AS app_role_restricted, "
                     "NOT has_schema_privilege('anon', 'remote_audit', 'USAGE') AS anon_schema_denied, "
                     "NOT has_schema_privilege('authenticated', 'remote_audit', 'USAGE') AS authenticated_schema_denied, "
                     "NOT has_table_privilege('anon', 'remote_audit.events', 'SELECT') AS anon_select_denied, "
@@ -83,21 +95,29 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 self.assertTrue(privileges["login_role_restricted"])
                 self.assertTrue(privileges["not_table_owner"])
                 self.assertTrue(privileges["is_member"])
+                self.assertTrue(privileges["only_expected_membership"])
+                self.assertTrue(privileges["app_role_has_no_parent_roles"])
                 self.assertTrue(privileges["can_select"])
                 self.assertTrue(privileges["can_insert"])
+                self.assertFalse(privileges["can_update_events"])
                 self.assertFalse(privileges["can_delete"])
+                self.assertFalse(privileges["can_truncate"])
                 self.assertTrue(privileges["can_update_head"])
+                self.assertFalse(privileges["can_create_in_schema"])
                 self.assertTrue(privileges["app_role_restricted"])
                 self.assertTrue(privileges["anon_schema_denied"])
                 self.assertTrue(privileges["authenticated_schema_denied"])
                 self.assertTrue(privileges["anon_select_denied"])
                 self.assertTrue(privileges["authenticated_select_denied"])
                 cursor.execute(
-                    "SELECT bool_and(c.relrowsecurity) AS all_rls_enabled FROM pg_class c "
-                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "SELECT bool_and(c.relrowsecurity) AS all_rls_enabled, "
+                    "bool_and(row_security_active(c.oid)) AS rls_active_for_login "
+                    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = 'remote_audit' AND c.relkind = 'r'"
                 )
-                self.assertTrue(cursor.fetchone()["all_rls_enabled"])
+                rls = cursor.fetchone()
+                self.assertTrue(rls["all_rls_enabled"])
+                self.assertTrue(rls["rls_active_for_login"])
         finally:
             conn.rollback()
             conn.close()
