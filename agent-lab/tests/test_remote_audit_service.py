@@ -106,7 +106,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
 
     def test_plan_token_mismatch_and_duplicate_json_rejected(self):
         plan = self.make_plan()
-        plan["total_bytes"] += 1
+        plan["approval_token"] = "b" * 64
         status, error = self.create_plan(plan=plan)
         self.assertEqual(status, 422)
         self.assertEqual(error["error"]["code"], "integrity_violation")
