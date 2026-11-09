@@ -7,7 +7,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from dorker_agent.artifacts import VerifiedGitHubActor
 from dorker_agent.postgres_audit_repository import PostgresAuditRepository
-from dorker_agent.remote_audit_service import AuditServiceError
+from dorker_agent.remote_audit_service import (
+    AuditServiceError,
+    AuthorizationResult,
+    VerifiedApprovalEvidence,
+)
 
 _DSN = os.environ.get("DORKER_TEST_POSTGRES_DSN")
 
@@ -47,6 +51,23 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             actor=self.actor,
             details={"plan": {"approval_token": token, "fixture": key}},
             approval_token=token,
+        )
+
+    def append_decision(self, *, repository_id: int, token: str, key: str, actor: VerifiedGitHubActor, evidence_id: str, decision: str = "approve"):
+        evidence = VerifiedApprovalEvidence(
+            issuer="test-issuer", evidence_id=evidence_id, repository_id=repository_id,
+            plan_token=token, decision=decision, reviewer_actor_id=actor.github_id,
+            evidence_digest=hashlib.sha256(f"{token}:{evidence_id}".encode()).hexdigest(),
+        )
+        authorization = AuthorizationResult(
+            allowed=True, decision_id=f"decision-{key}", policy_version="integration-test-v1",
+        )
+        return self.repository.append(
+            repository_id=repository_id, idempotency_key=key,
+            request_hash=hashlib.sha256(key.encode()).hexdigest(),
+            event_type="gc_plan_approved" if decision == "approve" else "gc_plan_rejected",
+            actor=actor, details={"approval_token": token, "decision": decision},
+            approval_token=token, approval_evidence=evidence, authorization=authorization,
         )
 
     def test_role_membership_inherits_least_privilege_and_rls(self):
@@ -404,6 +425,115 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 cursor.execute(
                     "DROP FUNCTION IF EXISTS remote_audit.test_reject_plan_insert()"
                 )
+            admin.commit()
+            admin.close()
+
+    def test_concurrent_terminal_decisions_for_one_plan_commit_exactly_one(self):
+        repository_id = self.repository_id + 20
+        token = hashlib.sha256(b"concurrent-terminal-plan").hexdigest()
+        self.append_plan("concurrent-terminal-plan", token)
+        actors = [VerifiedGitHubActor(910002, "reviewer-a"), VerifiedGitHubActor(910003, "reviewer-b")]
+        barrier = __import__("threading").Barrier(2)
+
+        def decide(index: int):
+            barrier.wait()
+            try:
+                return self.append_decision(
+                    repository_id=repository_id, token=token, key=f"terminal-{index}",
+                    actor=actors[index], evidence_id=f"evidence-terminal-{index}",
+                    decision="approve" if index == 0 else "reject",
+                )
+            except AuditServiceError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(decide, range(2)))
+        committed = [item for item in outcomes if isinstance(item, tuple)]
+        conflicts = [item for item in outcomes if isinstance(item, AuditServiceError)]
+        self.assertEqual(len(committed), 1)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].code, "decision_conflict")
+        events = self.repository.list_events(repository_id, 0, 10)
+        self.assertEqual(len(events), 2)
+        self.assertTrue(self.repository.verify(repository_id))
+
+    def test_concurrent_evidence_replay_across_plans_consumes_once(self):
+        repository_id = self.repository_id + 21
+        tokens = [hashlib.sha256(f"evidence-plan-{i}".encode()).hexdigest() for i in range(2)]
+        for index, token in enumerate(tokens):
+            self.append_plan(f"evidence-plan-{index}", token)
+        actors = [VerifiedGitHubActor(910004, "reviewer-c"), VerifiedGitHubActor(910005, "reviewer-d")]
+        barrier = __import__("threading").Barrier(2)
+
+        def decide(index: int):
+            barrier.wait()
+            try:
+                return self.append_decision(
+                    repository_id=repository_id, token=tokens[index], key=f"evidence-race-{index}",
+                    actor=actors[index], evidence_id="same-evidence-id",
+                )
+            except AuditServiceError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(decide, range(2)))
+        committed = [item for item in outcomes if isinstance(item, tuple)]
+        rejected = [item for item in outcomes if isinstance(item, AuditServiceError)]
+        self.assertEqual(len(committed), 1)
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0].code, "approval_evidence_replayed")
+        self.assertEqual(len(self.repository.list_events(repository_id, 0, 10)), 3)
+        self.assertTrue(self.repository.verify(repository_id))
+
+    def test_failed_evidence_index_write_rolls_back_decision_event_and_head(self):
+        admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
+        if not admin_dsn:
+            self.skipTest("DORKER_TEST_POSTGRES_ADMIN_DSN is not configured")
+        import psycopg
+
+        repository_id = self.repository_id + 22
+        token = hashlib.sha256(b"decision-write-rollback").hexdigest()
+        self.append_plan("decision-write-rollback-plan", token)
+        admin = psycopg.connect(admin_dsn)
+        try:
+            with admin.cursor() as cursor:
+                cursor.execute("""
+                    CREATE OR REPLACE FUNCTION remote_audit.test_reject_evidence_insert()
+                    RETURNS trigger LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        RAISE EXCEPTION 'forced evidence-index rollback test'
+                            USING ERRCODE = 'P0001';
+                    END;
+                    $function$
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER test_reject_evidence_insert
+                    BEFORE INSERT ON remote_audit.consumed_evidence
+                    FOR EACH ROW EXECUTE FUNCTION remote_audit.test_reject_evidence_insert()
+                """)
+            admin.commit()
+            reviewer = VerifiedGitHubActor(910006, "reviewer-rollback")
+            with self.assertRaises(AuditServiceError) as failure:
+                self.append_decision(
+                    repository_id=repository_id, token=token, key="decision-rollback",
+                    actor=reviewer, evidence_id="rollback-evidence",
+                )
+            self.assertEqual(failure.exception.code, "repository_unavailable")
+            with admin.cursor() as cursor:
+                cursor.execute(
+                    "SELECT "
+                    "(SELECT COUNT(*) FROM remote_audit.events WHERE repository_id = %s), "
+                    "(SELECT COUNT(*) FROM remote_audit.heads WHERE repository_id = %s), "
+                    "(SELECT COUNT(*) FROM remote_audit.decisions WHERE repository_id = %s), "
+                    "(SELECT COUNT(*) FROM remote_audit.consumed_evidence WHERE repository_id = %s)",
+                    (repository_id, repository_id, repository_id, repository_id),
+                )
+                # The plan event/head remain; the failed decision adds no partial rows.
+                self.assertEqual(cursor.fetchone(), (1, 1, 0, 0))
+        finally:
+            with admin.cursor() as cursor:
+                cursor.execute("DROP TRIGGER IF EXISTS test_reject_evidence_insert ON remote_audit.consumed_evidence")
+                cursor.execute("DROP FUNCTION IF EXISTS remote_audit.test_reject_evidence_insert()")
             admin.commit()
             admin.close()
 
