@@ -45,6 +45,26 @@ class AuthorizationResult:
     policy_version: str
 
 
+@dataclass(frozen=True)
+class VerifiedApprovalEvidence:
+    issuer: str
+    evidence_id: str
+    repository_id: int
+    plan_token: str
+    decision: str
+    reviewer_actor_id: int
+    evidence_digest: str
+
+
+class ApprovalEvidenceVerifier(Protocol):
+    def verify(self, *, envelope: dict[str, object], repository_id: int, plan_token: str, decision: str, actor: VerifiedGitHubActor) -> VerifiedApprovalEvidence: ...
+
+
+class DefaultDenyApprovalEvidenceVerifier:
+    def verify(self, **kwargs) -> VerifiedApprovalEvidence:
+        raise AuditServiceError(403, "approval_evidence_required", "independent approval evidence is not configured")
+
+
 class AuthorizationPolicy(Protocol):
     def authorize(
         self, *, actor: VerifiedGitHubActor, operation: str,
@@ -71,6 +91,8 @@ class AuditRepository(Protocol):
         self, *, repository_id: int, idempotency_key: str, request_hash: str,
         event_type: str, actor: VerifiedGitHubActor, details: dict[str, object],
         approval_token: str | None,
+        approval_evidence: VerifiedApprovalEvidence | None = None,
+        authorization: AuthorizationResult | None = None,
     ) -> tuple[dict[str, object], bool]: ...
 
     def lookup(self, repository_id: int, idempotency_key: str) -> dict[str, object] | None: ...
@@ -201,11 +223,14 @@ class InMemoryAuditRepository:
         self._idempotency: dict[tuple[int, str], dict[str, object]] = {}
         self._plans: dict[tuple[int, str], dict[str, object]] = {}
         self._decisions: set[tuple[int, str]] = set()
+        self._consumed_evidence: set[tuple[int, str, str]] = set()
 
     def append(
         self, *, repository_id: int, idempotency_key: str, request_hash: str,
         event_type: str, actor: VerifiedGitHubActor, details: dict[str, object],
         approval_token: str | None,
+        approval_evidence: VerifiedApprovalEvidence | None = None,
+        authorization: AuthorizationResult | None = None,
     ) -> tuple[dict[str, object], bool]:
         with self._lock:
             if not self._verify_locked(repository_id):
@@ -232,6 +257,11 @@ class InMemoryAuditRepository:
                     raise AuditServiceError(403, "forbidden", "creator cannot approve own plan")
                 if plan_key in self._decisions:
                     raise AuditServiceError(409, "decision_conflict", "plan already has a terminal decision")
+                if approval_evidence is None or authorization is None or not authorization.allowed:
+                    raise AuditServiceError(403, "approval_evidence_required", "verified approval evidence is required")
+                evidence_key = (repository_id, approval_evidence.issuer, approval_evidence.evidence_id)
+                if evidence_key in self._consumed_evidence:
+                    raise AuditServiceError(409, "approval_evidence_replayed", "approval evidence was already consumed")
 
             sequence = len(events) + 1
             previous_hash = events[-1]["event_hash"] if events else _ZERO_HASH
@@ -249,6 +279,16 @@ class InMemoryAuditRepository:
                 "previous_hash": previous_hash,
                 "event_hash": "",
             }
+            if event_type != "gc_plan_created":
+                details = {**details, "approval_evidence": {
+                    "issuer": approval_evidence.issuer,
+                    "evidence_id": approval_evidence.evidence_id,
+                    "evidence_digest": approval_evidence.evidence_digest,
+                }, "authorization": {
+                    "decision_id": authorization.decision_id,
+                    "policy_version": authorization.policy_version,
+                }}
+                event["details"] = copy.deepcopy(details)
             event["event_hash"] = _event_hash(event)
             events.append(event)
             result = {
@@ -260,6 +300,7 @@ class InMemoryAuditRepository:
                 self._plans[plan_key] = {"actor_id": actor.github_id, "event": copy.deepcopy(event)}
             else:
                 self._decisions.add(plan_key)
+                self._consumed_evidence.add((repository_id, approval_evidence.issuer, approval_evidence.evidence_id))
             return copy.deepcopy(event), False
 
     def lookup(self, repository_id: int, idempotency_key: str) -> dict[str, object] | None:
@@ -297,6 +338,7 @@ class RemoteAuditService:
         self, *, repository_id: int, identity_verifier: IdentityVerifier,
         repository: AuditRepository,
         authorization_policy: AuthorizationPolicy | None = None,
+        approval_evidence_verifier: ApprovalEvidenceVerifier | None = None,
     ) -> None:
         if isinstance(repository_id, bool) or not isinstance(repository_id, int) or repository_id < 1:
             raise ValueError("repository_id must be a positive integer")
@@ -311,6 +353,9 @@ class RemoteAuditService:
         self._identity_verifier = identity_verifier
         self._repository = repository
         self._authorization_policy = authorization_policy or DefaultDenyAuthorizationPolicy()
+        if approval_evidence_verifier is not None and not callable(getattr(approval_evidence_verifier, "verify", None)):
+            raise TypeError("approval_evidence_verifier must expose verify()")
+        self._approval_evidence_verifier = approval_evidence_verifier or DefaultDenyApprovalEvidenceVerifier()
 
     def handle(
         self, method: str, target: str, headers: dict[str, str] | None = None,
@@ -365,7 +410,7 @@ class RemoteAuditService:
                 return self._json(200, self._success(event, key, replayed, request_id))
             if method == "POST" and path == "/v1/audit/decisions":
                 payload = _strict_object(body)
-                if set(payload) != {"idempotency_key", "approval_token", "decision"}:
+                if set(payload) != {"idempotency_key", "approval_token", "decision", "evidence"}:
                     raise AuditServiceError(400, "invalid_request", "decision request fields are invalid")
                 key = self._validate_key(payload["idempotency_key"])
                 token, decision = payload["approval_token"], payload["decision"]
@@ -373,19 +418,42 @@ class RemoteAuditService:
                     raise AuditServiceError(400, "invalid_request", "approval_token is invalid")
                 if decision not in ("approve", "reject"):
                     raise AuditServiceError(400, "invalid_request", "decision must be approve or reject")
+                evidence_envelope = payload["evidence"]
+                if not isinstance(evidence_envelope, dict):
+                    raise AuditServiceError(400, "invalid_request", "evidence envelope must be an object")
                 operation = {
                     "api_version": "v1", "operation": "record_decision",
                     "repository_id": self._repository_id, "actor_id": actor.github_id,
-                    "payload": {"idempotency_key": key, "approval_token": token, "decision": decision},
+                    "payload": {"idempotency_key": key, "approval_token": token, "decision": decision, "evidence": evidence_envelope},
                 }
                 request_hash = _canonical_hash(operation)
-                self._authorize(actor, decision, token)
+                authorization = self._authorize(actor, decision, token)
+                try:
+                    verified_evidence = self._approval_evidence_verifier.verify(
+                        envelope=evidence_envelope, repository_id=self._repository_id,
+                        plan_token=token, decision=decision, actor=actor,
+                    )
+                except AuditServiceError:
+                    raise
+                except Exception as exc:
+                    raise AuditServiceError(503, "approval_evidence_unavailable", "approval evidence could not be verified", retryable=True) from exc
+                if (
+                    not isinstance(verified_evidence, VerifiedApprovalEvidence)
+                    or verified_evidence.repository_id != self._repository_id
+                    or verified_evidence.plan_token != token
+                    or verified_evidence.decision != decision
+                    or verified_evidence.reviewer_actor_id != actor.github_id
+                    or not verified_evidence.issuer or not verified_evidence.evidence_id
+                    or not _DIGEST.fullmatch(verified_evidence.evidence_digest)
+                ):
+                    raise AuditServiceError(403, "invalid_approval_evidence", "verified evidence does not match this decision")
                 event, replayed = self._repository.append(
                     repository_id=self._repository_id, idempotency_key=key,
                     request_hash=request_hash,
                     event_type="gc_plan_approved" if decision == "approve" else "gc_plan_rejected",
                     actor=actor, details={"approval_token": token, "decision": decision},
-                    approval_token=token,
+                    approval_token=token, approval_evidence=verified_evidence,
+                    authorization=authorization,
                 )
                 return self._json(200, self._success(event, key, replayed, request_id))
             if method == "GET" and path.startswith("/v1/audit/idempotency/"):
