@@ -1,6 +1,6 @@
-"""In-memory reference implementation for Remote Audit Service Contract v1.
+"""Test reference repositories for Remote Audit Service Contract v1.
 
-This module is a test harness only. It is not a durable or production service.
+SQLite durability is single-host only; neither adapter is a production deployment.
 """
 from __future__ import annotations
 
