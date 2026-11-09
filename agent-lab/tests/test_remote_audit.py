@@ -139,7 +139,7 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
             item = {
                 "sequence": sequence, "event_id": event_id,
                 "event_type": "gc_plan_created", "actor_id": 123,
-                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
+                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00.000Z",
                 "details": {}, "idempotency_key": f"key-{sequence}",
                 "request_hash": "a" * 64, "previous_hash": previous,
                 "event_hash": "",
@@ -167,7 +167,7 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
             item = {
                 "sequence": sequence, "event_id": event_id,
                 "event_type": "gc_plan_created", "actor_id": 123,
-                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
+                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00.000Z",
                 "details": {}, "idempotency_key": f"key-{sequence}",
                 "request_hash": "a" * 64, "previous_hash": previous,
                 "event_hash": "",
@@ -189,7 +189,7 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
             item = {
                 "sequence": sequence, "event_id": event_id,
                 "event_type": "gc_plan_created", "actor_id": 123,
-                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
+                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00.000Z",
                 "details": {}, "idempotency_key": f"key-{sequence}",
                 "request_hash": "a" * 64, "previous_hash": previous,
                 "event_hash": "",
@@ -214,6 +214,42 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
         client, _ = self.make_client(lambda *args: HttpResponse(200, body))
         with self.assertRaises(AuditClientError):
             client.list_audit_events()
+
+
+    def test_canonical_hash_vector_and_payload_tampering(self):
+        event = {
+            "sequence": 1, "event_id": "evt-1",
+            "event_type": "gc_plan_created", "actor_id": 123,
+            "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00.000Z",
+            "details": {}, "idempotency_key": "key-1",
+            "request_hash": "a" * 64, "previous_hash": "0" * 64,
+            "event_hash": "",
+        }
+        event["event_hash"] = RemoteAuditHttpClient.compute_event_hash(event)
+        self.assertEqual(
+            event["event_hash"],
+            "17e28036da076b4525c94aae117e95987fa2fc5da820c7ee856e7300587ce1e1",
+        )
+        self.assertTrue(RemoteAuditHttpClient.verify_event_chain([event]))
+        altered = dict(event, details={"approval": "forged"})
+        with self.assertRaises(AuditClientError):
+            RemoteAuditHttpClient.verify_event_chain([altered])
+
+    def test_verifies_partial_chain_from_trusted_anchor(self):
+        previous = "f" * 64
+        event = {
+            "sequence": 42, "event_id": "evt-42",
+            "event_type": "gc_plan_approved", "actor_id": 456,
+            "actor_login": "approver", "timestamp": "2026-11-09T00:00:00.000Z",
+            "details": {"approved": True}, "idempotency_key": "decision-42",
+            "request_hash": "b" * 64, "previous_hash": previous,
+            "event_hash": "",
+        }
+        event["event_hash"] = RemoteAuditHttpClient.compute_event_hash(event)
+        self.assertTrue(RemoteAuditHttpClient.verify_event_chain(
+            [event], expected_start_sequence=42,
+            expected_previous_hash=previous, expected_head_hash=event["event_hash"],
+        ))
 
     def test_validates_pagination_bounds(self):
         client, _ = self.make_client(lambda *args: HttpResponse(200, b'{"events":[]}'))
