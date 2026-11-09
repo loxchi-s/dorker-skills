@@ -12,7 +12,7 @@ Use a **transactional remote audit store** behind a narrow `AuditStore` interfac
 
 Keep SQLite as a local development/test adapter only. Do not attempt to synchronize SQLite files between runners, and do not use GitHub Actions artifacts, caches, workflow logs, or repository commits as the authoritative mutable ledger.
 
-The current protocol is an adapter seam, not a complete remote transaction contract: its v1 methods do not accept idempotency keys. Do not implement or deploy a remote adapter against v1 until the idempotency and ambiguous-commit semantics below are represented in the interface and tests.
+The local `AuditStore` protocol now requires caller-supplied idempotency keys. The SQLite adapter persists a unique key and canonical request hash in the same transaction as each event. A retry with the same key and same request returns the original event hash; reuse with changed request content fails closed. This is local SQLite behavior only: ambiguous network commit recovery and cross-run remote semantics still require a remote adapter and integration tests.
 
 The provider and hosting account are deliberately undecided. Select one only after reviewing trust boundaries, supported federated identity, transaction guarantees, backup/restore, retention, and cost. This document does not authorize provisioning a service or incurring cost.
 
@@ -75,8 +75,8 @@ The runner must receive only the minimum short-lived permission needed to call t
 
 ## Implementation sequence
 
-1. **Completed (v1 scope):** define a provider-neutral `AuditStore` protocol and SQLite conformance tests for structural compatibility, restart/reopen, append/read/verify, duplicate plan/decision rejection, distinct-actor approval, and concurrent terminal decisions.
-2. **Still required before remote use:** add caller-supplied idempotency keys and same-key/same-payload replay semantics; test ambiguous-commit recovery and transaction rollback. The current v1 interface does not expose idempotency keys and is not a production remote-store contract.
+1. **Implemented locally:** provider-neutral `AuditStore` protocol requires idempotency keys; SQLite persists a unique key and request hash atomically with each event. Conformance tests cover restart/reopen, same-key replay, changed-payload conflict, concurrent decisions, chain verification, and rollback behavior after capacity failure.
+2. **Still required before remote use:** test ambiguous network commit recovery against a real transactional adapter, including retry with the same key across independent runner invocations. The local SQLite tests do not prove cross-run durability.
 3. Select a managed provider only after explicit approval; implement the remote service and database schema with transactional constraints.
 4. Add cross-run integration tests using two independent runner invocations and verify that the second can read and extend the first run's audit state.
 5. Add external signed checkpoints, backup/restore drills, monitoring, and documented RPO/RTO.
