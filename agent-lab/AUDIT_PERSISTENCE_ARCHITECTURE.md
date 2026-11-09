@@ -2,7 +2,7 @@
 
 ## Status
 
-**Partially implemented; remote persistence remains proposed.** `AuditStore` now defines a provider-neutral Python protocol for the existing GC plan, decision, event-read, and chain-verification operations. `SQLiteArtifactIndex` structurally satisfies this v1 protocol and is covered by local conformance tests. It remains a durable single-host index: a GitHub-hosted runner is ephemeral, so a database file created by one run is not available to the next run. Workflow artifacts and Actions caches are not the authoritative audit database.
+**Partially implemented; remote persistence remains proposed.** `AuditStore` defines a provider-neutral Python protocol for the existing GC plan, decision, event-read, and chain-verification operations. `SQLiteArtifactIndex` structurally satisfies this v1 protocol and is covered by local conformance tests. A provider-neutral synchronous HTTP client now implements bounded HTTPS requests, strict bounded JSON parsing, stable idempotency-key retries, and explicit indeterminate outcomes after transport failures; its mock-transport tests validate client behavior only. It remains a durable single-host index: a GitHub-hosted runner is ephemeral, so a database file created by one run is not available to the next run. Workflow artifacts and Actions caches are not the authoritative audit database.
 
 No provider, credentials, database, workflow, or repository permission is configured by this document. The GC workflow remains disabled, CI remains read-only, and artifact deletion remains unavailable.
 
@@ -93,4 +93,4 @@ The provider-neutral HTTP boundary, OIDC trust boundary, request/response envelo
 
 Before remote use, implement the service/client against that contract and pass the full failure-injection (FI-01..FI-14) and cross-run (CR-01..CR-07) suite against a real transactional adapter using two independent runner invocations. A fake service can validate client behavior but is not evidence of remote durability. In particular, a lost response after commit must resolve to the original event by the same idempotency key; an unresolved outcome remains indeterminate and must never be reported as success.
 
-Current status remains unchanged: local SQLite idempotency is implemented and CI-tested; remote ambiguous-commit recovery, remote persistence, and cross-run integration remain unimplemented and unvalidated.
+Current status: local SQLite idempotency is implemented and CI-tested; the HTTP client is implemented with mock-transport tests but has not been tested against a live service; remote ambiguous-commit recovery, remote persistence, and cross-run integration remain unimplemented and unvalidated.
