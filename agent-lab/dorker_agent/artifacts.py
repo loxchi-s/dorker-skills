@@ -58,14 +58,19 @@ class AuditStore(Protocol):
     """Provider-neutral contract for the current artifact-GC audit operations.
 
     Implementations must commit each operation atomically and fail closed.
-    This v1 contract intentionally does not claim cross-run idempotency: a
-    future version must add caller-supplied idempotency keys before remote use.
+    Every write requires a caller-supplied idempotency key. Reusing a key with
+    the same canonical request returns the original event hash; changed content
+    under the same key fails closed.
     """
 
-    def record_gc_plan(self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim) -> str: ...
+    def record_gc_plan(
+        self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim,
+        idempotency_key: str,
+    ) -> str: ...
 
     def record_gc_approval(
         self, approval_token: str, *, claim: GitHubActorClaim, approved: bool,
+        idempotency_key: str,
     ) -> str: ...
 
     def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]: ...
@@ -391,9 +396,22 @@ class SQLiteArtifactIndex:
                     approval_token TEXT,
                     details_json TEXT NOT NULL,
                     previous_hash TEXT NOT NULL,
-                    event_hash TEXT NOT NULL UNIQUE
+                    event_hash TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT,
+                    request_hash TEXT
                 )
             """)
+            columns = {row["name"] for row in db.execute(
+                "PRAGMA table_info(artifact_audit_log)"
+            ).fetchall()}
+            if "idempotency_key" not in columns:
+                db.execute("ALTER TABLE artifact_audit_log ADD COLUMN idempotency_key TEXT")
+            if "request_hash" not in columns:
+                db.execute("ALTER TABLE artifact_audit_log ADD COLUMN request_hash TEXT")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_idempotency_key "
+                "ON artifact_audit_log(idempotency_key) WHERE idempotency_key IS NOT NULL"
+            )
 
     @staticmethod
     def _manifest_id(manifest: ArtifactManifest) -> str:
@@ -567,7 +585,10 @@ class SQLiteArtifactIndex:
             raise ValueError("verified GitHub login is invalid")
         return actor
 
-    def record_gc_plan(self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim) -> str:
+    def record_gc_plan(
+        self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim,
+        idempotency_key: str,
+    ) -> str:
         if not isinstance(plan, ArtifactDeletionPlan):
             raise TypeError("plan must be an ArtifactDeletionPlan")
         actor = self._verified_actor(claim)
@@ -586,10 +607,12 @@ class SQLiteArtifactIndex:
             actor=f"github:{actor.github_id}:{actor.login}",
             action="gc_plan_created",
             approval_token=plan.approval_token, details=details,
+            idempotency_key=idempotency_key,
         )
 
     def record_gc_approval(
         self, approval_token: str, *, claim: GitHubActorClaim, approved: bool,
+        idempotency_key: str,
     ) -> str:
         if not isinstance(approval_token, str) or not _DIGEST.fullmatch(approval_token):
             raise ValueError("approval_token must be a lowercase 64-character hex digest")
@@ -602,7 +625,7 @@ class SQLiteArtifactIndex:
             approval_token=approval_token,
             details={"approved": approved, "github_actor_id": actor.github_id,
                      "github_login": actor.login},
-            require_distinct_approver=True,
+            require_distinct_approver=True, idempotency_key=idempotency_key,
         )
 
     def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]:
@@ -611,8 +634,8 @@ class SQLiteArtifactIndex:
         with closing(self._connect()) as db:
             rows = db.execute(
                 "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
-                "details_json, previous_hash, event_hash FROM artifact_audit_log "
-                "ORDER BY sequence DESC LIMIT ?", (limit,),
+                "details_json, previous_hash, event_hash, idempotency_key, request_hash "
+                "FROM artifact_audit_log ORDER BY sequence DESC LIMIT ?", (limit,),
             ).fetchall()
         return [
             {
@@ -624,6 +647,7 @@ class SQLiteArtifactIndex:
                 "details": json.loads(row["details_json"]),
                 "previous_hash": row["previous_hash"],
                 "event_hash": row["event_hash"],
+                "idempotency_key": row["idempotency_key"],
             }
             for row in reversed(rows)
         ]
@@ -632,8 +656,8 @@ class SQLiteArtifactIndex:
         with closing(self._connect()) as db:
             rows = db.execute(
                 "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
-                "details_json, previous_hash, event_hash FROM artifact_audit_log "
-                "ORDER BY sequence"
+                "details_json, previous_hash, event_hash, idempotency_key, request_hash "
+                "FROM artifact_audit_log ORDER BY sequence"
             ).fetchall()
         previous = "0" * 64
         for row in rows:
@@ -648,6 +672,9 @@ class SQLiteArtifactIndex:
             }
             if row["previous_hash"] != previous:
                 return False
+            if row["idempotency_key"] is not None:
+                payload["idempotency_key"] = row["idempotency_key"]
+                payload["request_hash"] = row["request_hash"]
             expected = self._audit_hash(payload)
             if not hmac.compare_digest(expected, row["event_hash"]):
                 return False
@@ -656,13 +683,34 @@ class SQLiteArtifactIndex:
 
     def _append_audit_event(
         self, *, actor: str, action: str, approval_token: str | None,
-        details: dict[str, object], require_distinct_approver: bool = False,
+        details: dict[str, object], idempotency_key: str,
+        require_distinct_approver: bool = False,
     ) -> str:
+        if (not isinstance(idempotency_key, str)
+                or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", idempotency_key)):
+            raise ValueError("idempotency_key must be 1..128 safe ASCII characters")
         details_json = json.dumps(details, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        request_hash = self._audit_hash({
+            "actor": actor, "action": action, "approval_token": approval_token,
+            "details_json": details_json,
+        })
         if len(details_json.encode("utf-8")) > 64 * 1024:
             raise ValueError("audit event details exceed 64 KiB")
         with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            prior_request = db.execute(
+                "SELECT request_hash, event_hash FROM artifact_audit_log "
+                "WHERE idempotency_key=?", (idempotency_key,),
+            ).fetchone()
+            if prior_request is not None:
+                if prior_request["request_hash"] is None or not hmac.compare_digest(
+                    prior_request["request_hash"], request_hash,
+                ):
+                    db.rollback()
+                    raise ValueError("idempotency key was already used for a different request")
+                event_hash = prior_request["event_hash"]
+                db.commit()
+                return event_hash
             if action == "gc_plan_created":
                 duplicate_plan = db.execute(
                     "SELECT 1 FROM artifact_audit_log "
@@ -715,13 +763,17 @@ class SQLiteArtifactIndex:
                 "approval_token": approval_token,
                 "details_json": details_json,
                 "previous_hash": previous_hash,
+                "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
             }
             event_hash = self._audit_hash(payload)
             db.execute(
                 "INSERT INTO artifact_audit_log "
-                "(sequence, timestamp_unix_ms, actor, action, approval_token, details_json, previous_hash, event_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (sequence, timestamp, actor, action, approval_token, details_json, previous_hash, event_hash),
+                "(sequence, timestamp_unix_ms, actor, action, approval_token, details_json, "
+                "previous_hash, event_hash, idempotency_key, request_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (sequence, timestamp, actor, action, approval_token, details_json,
+                 previous_hash, event_hash, idempotency_key, request_hash),
             )
             db.commit()
         return event_hash
