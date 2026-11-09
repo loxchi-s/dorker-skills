@@ -397,6 +397,13 @@ class SQLiteAuditRepository:
                     UNIQUE(repository_id, event_id),
                     UNIQUE(repository_id, idempotency_key)
                 );
+                CREATE TABLE IF NOT EXISTS remote_audit_heads (
+                    repository_id INTEGER PRIMARY KEY,
+                    sequence INTEGER NOT NULL,
+                    event_hash TEXT NOT NULL,
+                    FOREIGN KEY(repository_id, sequence)
+                        REFERENCES remote_audit_events(repository_id, sequence)
+                );
                 CREATE TABLE IF NOT EXISTS remote_audit_plans (
                     repository_id INTEGER NOT NULL,
                     plan_token TEXT NOT NULL,
@@ -461,7 +468,17 @@ class SQLiteAuditRepository:
                 previous = str(row["event_hash"])
         except (ValueError, TypeError, RecursionError, AuditServiceError):
             return False
-        return True
+        head = db.execute(
+            "SELECT sequence, event_hash FROM remote_audit_heads WHERE repository_id=?",
+            (repository_id,),
+        ).fetchone()
+        if not rows:
+            return head is None
+        return bool(
+            head is not None
+            and head["sequence"] == len(rows)
+            and head["event_hash"] == previous
+        )
 
     def append(
         self, *, repository_id: int, idempotency_key: str, request_hash: str,
@@ -559,8 +576,12 @@ class SQLiteAuditRepository:
             db.execute(
                 "INSERT INTO remote_audit_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (repository_id, sequence, event["event_id"], event_json, event["event_hash"],
-                 idempotency_key, request_hash, event_type,
-                 token if event_type == "gc_plan_created" else token),
+                 idempotency_key, request_hash, event_type, token),
+            )
+            db.execute(
+                "INSERT INTO remote_audit_heads(repository_id, sequence, event_hash) VALUES (?, ?, ?) "
+                "ON CONFLICT(repository_id) DO UPDATE SET sequence=excluded.sequence, event_hash=excluded.event_hash",
+                (repository_id, sequence, event["event_hash"]),
             )
             if event_type == "gc_plan_created":
                 db.execute(
