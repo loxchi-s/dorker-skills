@@ -13,6 +13,39 @@ END
 $$;
 
 ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+
+-- Fail closed if a pre-existing role has unsafe memberships or object ownership.
+-- Do not silently mutate existing grants/ownership during a privilege migration.
+DO $
+DECLARE
+  app_role_oid oid;
+BEGIN
+  SELECT oid INTO app_role_oid
+  FROM pg_roles
+  WHERE rolname = 'remote_audit_app';
+
+  IF EXISTS (
+    SELECT 1 FROM pg_auth_members
+    WHERE member = app_role_oid
+  ) THEN
+    RAISE EXCEPTION
+      'remote_audit_app must not be a member of any other role; audit memberships first';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_namespace
+    WHERE nspname = 'remote_audit'
+      AND nspowner = app_role_oid
+  ) OR EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relnamespace = 'remote_audit'::regnamespace
+      AND relowner = app_role_oid
+  ) THEN
+    RAISE EXCEPTION
+      'remote_audit_app must not own the audit schema or its objects';
+  END IF;
+END
+$;
 GRANT USAGE ON SCHEMA remote_audit TO remote_audit_app;
 
 REVOKE ALL ON SCHEMA remote_audit FROM PUBLIC, anon, authenticated;
