@@ -76,7 +76,7 @@ class PostgresAuditRepository:
         return value
 
     def _configure(self, cursor) -> None:
-        cursor.execute("SET LOCAL statement_timeout = %s", (self._statement_timeout_ms,))
+        cursor.execute("SELECT set_config('statement_timeout', %s, true)", (str(self._statement_timeout_ms),))
 
     def _verify_cursor(self, cursor, repository_id: int) -> bool:
         cursor.execute(
