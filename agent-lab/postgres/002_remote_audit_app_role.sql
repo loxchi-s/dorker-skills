@@ -10,6 +10,8 @@ BEGIN
 END
 $$;
 
+BEGIN;
+
 ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
 GRANT USAGE ON SCHEMA remote_audit TO remote_audit_app;
 
@@ -70,3 +72,5 @@ CREATE POLICY remote_audit_app_evidence_insert ON remote_audit.consumed_evidence
 
 COMMENT ON ROLE remote_audit_app IS
   'NOLOGIN least-privilege group role for the trusted remote audit adapter; repository-wide access, no tenant isolation.';
+
+COMMIT;
