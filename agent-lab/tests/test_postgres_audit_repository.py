@@ -42,9 +42,9 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
         cls.repository_id = int.from_bytes(os.urandom(8), "big") % (2**63 - 1) + 1
         cls.actor = VerifiedGitHubActor(910001, "postgres-adapter-test")
 
-    def append_plan(self, key: str, token: str):
+    def append_plan(self, key: str, token: str, *, repository_id: int | None = None):
         return self.repository.append(
-            repository_id=self.repository_id,
+            repository_id=repository_id or self.repository_id,
             idempotency_key=key,
             request_hash=hashlib.sha256(key.encode()).hexdigest(),
             event_type="gc_plan_created",
@@ -431,7 +431,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
     def test_concurrent_terminal_decisions_for_one_plan_commit_exactly_one(self):
         repository_id = self.repository_id + 20
         token = hashlib.sha256(b"concurrent-terminal-plan").hexdigest()
-        self.append_plan("concurrent-terminal-plan", token)
+        self.append_plan("concurrent-terminal-plan", token, repository_id=repository_id)
         actors = [VerifiedGitHubActor(910002, "reviewer-a"), VerifiedGitHubActor(910003, "reviewer-b")]
         barrier = __import__("threading").Barrier(2)
 
@@ -461,7 +461,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
         repository_id = self.repository_id + 21
         tokens = [hashlib.sha256(f"evidence-plan-{i}".encode()).hexdigest() for i in range(2)]
         for index, token in enumerate(tokens):
-            self.append_plan(f"evidence-plan-{index}", token)
+            self.append_plan(f"evidence-plan-{index}", token, repository_id=repository_id)
         actors = [VerifiedGitHubActor(910004, "reviewer-c"), VerifiedGitHubActor(910005, "reviewer-d")]
         barrier = __import__("threading").Barrier(2)
 
@@ -493,7 +493,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
 
         repository_id = self.repository_id + 22
         token = hashlib.sha256(b"decision-write-rollback").hexdigest()
-        self.append_plan("decision-write-rollback-plan", token)
+        self.append_plan("decision-write-rollback-plan", token, repository_id=repository_id)
         admin = psycopg.connect(admin_dsn)
         try:
             with admin.cursor() as cursor:
