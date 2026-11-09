@@ -347,6 +347,19 @@ class RemoteAuditServiceTests(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             created = json.loads(payload)
+            replay_status, _, replay_payload = first_service.handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "durable-plan", "plan": plan}).encode(),
+            )
+            self.assertEqual(replay_status, 200)
+            self.assertTrue(json.loads(replay_payload)["replayed"])
+            changed_plan = self.make_plan(size=256, digest="c" * 64)
+            conflict_status, _, conflict_payload = first_service.handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "durable-plan", "plan": changed_plan}).encode(),
+            )
+            self.assertEqual(conflict_status, 409)
+            self.assertEqual(json.loads(conflict_payload)["error"]["code"], "idempotency_conflict")
 
             second_repo = SQLiteAuditRepository(database)
             second_service = RemoteAuditService(
