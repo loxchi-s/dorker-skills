@@ -220,6 +220,19 @@ class RemoteAuditServiceTests(unittest.TestCase):
         self.assertTrue(health["ready"])
         self.assertEqual(health["mode"], "in-memory-test-only")
 
+
+    def test_corrupted_chain_blocks_reads_and_writes(self):
+        self.assertEqual(self.create_plan()[0], 200)
+        self.repository._events[1450173940][0]["details"]["tampered"] = True
+        status, error = self.request(
+            "GET", "/v1/audit/events?limit=10", token=self.creator,
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(error["error"]["code"], "integrity_violation")
+        status, error = self.create_plan(key="after-tamper")
+        self.assertEqual(status, 422)
+        self.assertEqual(error["error"]["code"], "integrity_violation")
+
     def test_unauthenticated_request_and_oversized_body_rejected(self):
         status, error = self.request("GET", "/v1/audit/events")
         self.assertEqual(status, 401)
