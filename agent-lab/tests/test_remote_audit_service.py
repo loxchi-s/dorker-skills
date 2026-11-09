@@ -180,6 +180,30 @@ class RemoteAuditServiceTests(unittest.TestCase):
         self.assertEqual(conflict["error"]["code"], "decision_conflict")
         self.assertTrue(self.repository.verify(1450173940))
 
+    def test_approval_evidence_is_audited_and_replay_is_rejected(self):
+        self.create_plan()
+        first_plan = self.make_plan()
+        status, first = self.request(
+            "POST", "/v1/audit/decisions", token=self.approver_a,
+            body={"idempotency_key": "evidence-one", "approval_token": first_plan["approval_token"], "decision": "approve"},
+        )
+        self.assertEqual(status, 200)
+        event = self.repository.list_events(1450173940, 0, 10)[-1]
+        self.assertEqual(event["details"]["approval_evidence"]["issuer"], "test-issuer")
+        self.assertIn("evidence_digest", event["details"]["approval_evidence"])
+        self.assertEqual(event["details"]["authorization"]["policy_version"], "test-only-v1")
+        self.assertNotIn("proof", json.dumps(event["details"]))
+
+        second_plan = self.make_plan(digest="b" * 64)
+        self.create_plan(key="plan-two", plan=second_plan)
+        status, error = self.request(
+            "POST", "/v1/audit/decisions", token=self.approver_a,
+            body={"idempotency_key": "evidence-replay", "approval_token": second_plan["approval_token"], "decision": "approve"},
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(error["error"]["code"], "approval_evidence_replayed")
+        self.assertEqual(len(self.repository.list_events(1450173940, 0, 10)), 3)
+
     def test_concurrent_decisions_commit_exactly_one(self):
         _, _ = self.create_plan()
         plan = self.make_plan()
