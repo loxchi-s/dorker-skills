@@ -220,11 +220,17 @@ class RemoteAuditServiceTests(unittest.TestCase):
         self.assertIsNotNone(page["next_cursor"])
 
     def test_health_reports_test_only_and_chain_readiness(self):
-        status, health = self.request("GET", "/v1/audit/health")
+        status, health = self.request("GET", "/v1/audit/health", token=self.creator)
         self.assertEqual(status, 200)
         self.assertTrue(health["ready"])
         self.assertEqual(health["mode"], "in-memory-test-only")
 
+
+
+    def test_health_endpoint_requires_authenticated_workflow_identity(self):
+        status, error = self.request("GET", "/v1/audit/health")
+        self.assertEqual(status, 401)
+        self.assertEqual(error["error"]["code"], "unauthenticated")
 
     def test_corrupted_chain_blocks_reads_and_writes(self):
         self.assertEqual(self.create_plan()[0], 200)
