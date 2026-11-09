@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import threading
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+
+from dorker_agent.artifacts import VerifiedGitHubActor
+from dorker_agent.remote_audit import RemoteAuditHttpClient
+from dorker_agent.remote_audit_service import (
+    InMemoryAuditRepository,
+    RemoteAuditService,
+)
+
+
+def b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def fake_token(actor_id: int, login: str) -> str:
+    header = b64url(b'{"alg":"RS256","kid":"fake"}')
+    payload = b64url(json.dumps({"actor_id": actor_id, "actor": login}).encode())
+    return f"{header}.{payload}.test-signature"
+
+
+class TestIdentityVerifier:
+    def __init__(self):
+        self.allowed = {
+            fake_token(101, "creator"): VerifiedGitHubActor(101, "creator"),
+            fake_token(202, "approver-a"): VerifiedGitHubActor(202, "approver-a"),
+            fake_token(303, "approver-b"): VerifiedGitHubActor(303, "approver-b"),
+        }
+
+    def verify(self, claim):
+        actor = self.allowed.get(claim.oidc_token)
+        if actor is None or (claim.github_id, claim.login) != (actor.github_id, actor.login):
+            from dorker_agent.github_oidc import OIDCVerificationError
+            raise OIDCVerificationError("fake identity not allowed")
+        return actor
+
+
+class RemoteAuditServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.repository = InMemoryAuditRepository()
+        self.service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=TestIdentityVerifier(),
+            repository=self.repository,
+        )
+        self.creator = fake_token(101, "creator")
+        self.approver_a = fake_token(202, "approver-a")
+        self.approver_b = fake_token(303, "approver-b")
+
+    def request(self, method, path, *, token=None, body=None):
+        headers = {}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        raw = body if isinstance(body, bytes) else json.dumps(body).encode() if body is not None else b""
+        status, response_headers, payload = self.service.handle(method, path, headers, raw)
+        return status, json.loads(payload)
+
+    @staticmethod
+    def make_plan(*, size=128):
+        cutoff = 1_800_000_000_000_000_000
+        candidates = [{
+            "sha256": "a" * 64,
+            "size_bytes": size,
+            "mtime_unix_ns": cutoff - 1,
+        }]
+        canonical = json.dumps(
+            {"cutoff_unix_ns": cutoff, "candidates": candidates},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+        return {
+            "approval_token": hashlib.sha256(canonical).hexdigest(),
+            "cutoff_unix_ns": cutoff,
+            "total_bytes": size,
+            "candidates": candidates,
+        }
+
+    def create_plan(self, *, key="plan-key", token=None, plan=None):
+        return self.request(
+            "POST", "/v1/audit/plans", token=token or self.creator,
+            body={"idempotency_key": key, "plan": plan or self.make_plan()},
+        )
+
+    def test_plan_commit_replay_and_idempotency_conflict(self):
+        plan = self.make_plan()
+        status, first = self.create_plan(plan=plan)
+        self.assertEqual(status, 200)
+        self.assertEqual(first["sequence"], 1)
+        self.assertFalse(first["replayed"])
+
+        status, replay = self.create_plan(plan=plan)
+        self.assertEqual(status, 200)
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(first["event_hash"], replay["event_hash"])
+        self.assertEqual(len(self.repository.list_events(1450173940, 0, 10)), 1)
+
+        status, conflict = self.create_plan(plan=self.make_plan(size=256))
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["error"]["code"], "idempotency_conflict")
+        self.assertEqual(len(self.repository.list_events(1450173940, 0, 10)), 1)
+
+    def test_plan_token_mismatch_and_duplicate_json_rejected(self):
+        plan = self.make_plan()
+        plan["total_bytes"] += 1
+        status, error = self.create_plan(plan=plan)
+        self.assertEqual(status, 422)
+        self.assertEqual(error["error"]["code"], "integrity_violation")
+
+        raw = b'{"idempotency_key":"x","idempotency_key":"y","plan":{}}'
+        status, error = self.request("POST", "/v1/audit/plans", token=self.creator, body=raw)
+        self.assertEqual(status, 400)
+        self.assertEqual(len(self.repository.list_events(1450173940, 0, 10)), 0)
+
+    def test_unverified_identity_fails_closed(self):
+        status, error = self.create_plan(token=fake_token(999, "intruder"))
+        self.assertEqual(status, 401)
+        self.assertEqual(error["error"]["code"], "unauthenticated")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
+    def test_creator_cannot_approve_and_decision_is_terminal(self):
+        status, created = self.create_plan()
+        self.assertEqual(status, 200)
+        plan = self.make_plan()
+        status, denied = self.request(
+            "POST", "/v1/audit/decisions", token=self.creator,
+            body={"idempotency_key": "creator-decision", "approval_token": plan["approval_token"], "decision": "approve"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(denied["error"]["code"], "forbidden")
+
+        status, approved = self.request(
+            "POST", "/v1/audit/decisions", token=self.approver_a,
+            body={"idempotency_key": "approver-decision", "approval_token": plan["approval_token"], "decision": "approve"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(approved["sequence"], 2)
+
+        status, conflict = self.request(
+            "POST", "/v1/audit/decisions", token=self.approver_b,
+            body={"idempotency_key": "second-decision", "approval_token": plan["approval_token"], "decision": "reject"},
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["error"]["code"], "decision_conflict")
+        self.assertTrue(self.repository.verify(1450173940))
+
+    def test_concurrent_decisions_commit_exactly_one(self):
+        _, _ = self.create_plan()
+        plan = self.make_plan()
+        barrier = threading.Barrier(2)
+
+        def decide(token, key, decision):
+            barrier.wait()
+            return self.request(
+                "POST", "/v1/audit/decisions", token=token,
+                body={"idempotency_key": key, "approval_token": plan["approval_token"], "decision": decision},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(decide, self.approver_a, "race-a", "approve"),
+                pool.submit(decide, self.approver_b, "race-b", "reject"),
+            ]
+            results = [future.result(timeout=5) for future in futures]
+        self.assertEqual(sorted(status for status, _ in results), [200, 409])
+        events = self.repository.list_events(1450173940, 0, 10)
+        self.assertEqual(len(events), 2)
+        self.assertTrue(self.repository.verify(1450173940))
+
+    def test_event_pagination_hash_chain_and_idempotency_lookup(self):
+        _, plan_result = self.create_plan()
+        plan = self.make_plan()
+        self.request(
+            "POST", "/v1/audit/decisions", token=self.approver_a,
+            body={"idempotency_key": "decision-a", "approval_token": plan["approval_token"], "decision": "approve"},
+        )
+        status, first_page = self.request(
+            "GET", "/v1/audit/events?limit=1", token=self.creator,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(first_page["events"]), 1)
+        cursor = first_page["next_cursor"]
+        status, second_page = self.request(
+            "GET", f"/v1/audit/events?limit=1&cursor={cursor}", token=self.creator,
+        )
+        self.assertEqual(status, 200)
+        self.assertIsNone(second_page["next_cursor"])
+        all_events = first_page["events"] + second_page["events"]
+        self.assertTrue(RemoteAuditHttpClient.verify_event_chain(all_events))
+
+        status, lookup = self.request(
+            "GET", "/v1/audit/idempotency/plan-key", token=self.creator,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(lookup["event_hash"], plan_result["event_hash"])
+        self.assertTrue(lookup["replayed"])
+
+    def test_health_reports_test_only_and_chain_readiness(self):
+        status, health = self.request("GET", "/v1/audit/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(health["ready"])
+        self.assertEqual(health["mode"], "in-memory-test-only")
+
+    def test_unauthenticated_request_and_oversized_body_rejected(self):
+        status, error = self.request("GET", "/v1/audit/events")
+        self.assertEqual(status, 401)
+        status, error = self.service.handle(
+            "POST", "/v1/audit/plans", {}, b"x" * (64 * 1024 + 1),
+        )
+        self.assertEqual(status, 413)
+
+    def test_wsgi_adapter(self):
+        import io
+        body = json.dumps({
+            "idempotency_key": "wsgi-plan",
+            "plan": self.make_plan(),
+        }).encode()
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/v1/audit/plans",
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(body)),
+            "HTTP_AUTHORIZATION": f"Bearer {self.creator}",
+            "wsgi.input": io.BytesIO(body),
+        }
+        captured = {}
+        def start_response(status, headers):
+            captured["status"] = status
+            captured["headers"] = headers
+        payload = b"".join(self.service(environ, start_response))
+        self.assertEqual(captured["status"], "200 OK")
+        self.assertEqual(json.loads(payload)["sequence"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
