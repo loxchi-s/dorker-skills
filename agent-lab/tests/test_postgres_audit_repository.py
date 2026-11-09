@@ -63,7 +63,13 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                     "has_table_privilege(current_user, 'remote_audit.events', 'INSERT') AS can_insert, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'DELETE') AS can_delete, "
                     "has_table_privilege(current_user, 'remote_audit.heads', 'UPDATE') AS can_update_head, "
-                    "(SELECT NOT rolinherit FROM pg_roles WHERE rolname = 'remote_audit_app') AS app_noinherit"
+                    "(SELECT NOT rolinherit AND NOT rolcanlogin AND NOT rolsuper "
+                    "AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolbypassrls "
+                    "FROM pg_roles WHERE rolname = 'remote_audit_app') AS app_role_restricted, "
+                    "NOT has_schema_privilege('anon', 'remote_audit', 'USAGE') AS anon_schema_denied, "
+                    "NOT has_schema_privilege('authenticated', 'remote_audit', 'USAGE') AS authenticated_schema_denied, "
+                    "NOT has_table_privilege('anon', 'remote_audit.events', 'SELECT') AS anon_select_denied, "
+                    "NOT has_table_privilege('authenticated', 'remote_audit.events', 'SELECT') AS authenticated_select_denied"
                 )
                 privileges = cursor.fetchone()
                 self.assertEqual(privileges["current_user"], "remote_audit_login")
@@ -72,7 +78,11 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 self.assertTrue(privileges["can_insert"])
                 self.assertFalse(privileges["can_delete"])
                 self.assertTrue(privileges["can_update_head"])
-                self.assertTrue(privileges["app_noinherit"])
+                self.assertTrue(privileges["app_role_restricted"])
+                self.assertTrue(privileges["anon_schema_denied"])
+                self.assertTrue(privileges["authenticated_schema_denied"])
+                self.assertTrue(privileges["anon_select_denied"])
+                self.assertTrue(privileges["authenticated_select_denied"])
                 cursor.execute(
                     "SELECT bool_and(c.relrowsecurity) AS all_rls_enabled FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
