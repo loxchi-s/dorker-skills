@@ -20,7 +20,21 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             import psycopg  # noqa: F401
         except ImportError as exc:
             raise unittest.SkipTest("psycopg is not installed") from exc
-        cls.repository = PostgresAuditRepository.from_dsn(_DSN)
+        role = os.environ.get("DORKER_TEST_POSTGRES_ROLE")
+        if role:
+            if not role.replace("_", "").isalnum():
+                raise ValueError("invalid test database role")
+            import psycopg
+            from psycopg.rows import dict_row
+            cls.repository = PostgresAuditRepository(
+                lambda: psycopg.connect(
+                    _DSN, row_factory=dict_row, connect_timeout=5,
+                    application_name="dorker-remote-audit-test",
+                    options=f"-c role={role}",
+                )
+            )
+        else:
+            cls.repository = PostgresAuditRepository.from_dsn(_DSN)
         cls.repository_id = int.from_bytes(os.urandom(8), "big") % (2**63 - 1) + 1
         cls.actor = VerifiedGitHubActor(910001, "postgres-adapter-test")
 
