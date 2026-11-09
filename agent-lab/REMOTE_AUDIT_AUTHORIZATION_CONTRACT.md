@@ -131,3 +131,9 @@ These tests MUST run against the eventual transactional adapter with independent
 Before implementation can be enabled, the repository owner must explicitly approve immutable actor IDs and operation grants; policy configuration source/version/change control/break-glass procedure; trusted evidence issuer and cryptographic contract; reviewer-to-GitHub-actor binding; expiry, clock-skew, revocation, retention, and privacy rules; atomic evidence-consumption strategy; and audit-reader scope.
 
 Until those decisions are supplied and tests pass, privileged operations MUST remain default-deny. No workflow permission, OIDC id-token: write, provider integration, database, or artifact deletion is authorized by this document.
+
+## Runtime enforcement status (2026-11-09)
+
+The reference service now accepts an injected AuthorizationPolicy and applies it after identity verification to create_plan, read_audit, lookup_idempotency, approve, reject, and the authenticated health/readiness endpoint. The built-in policy is DefaultDenyAuthorizationPolicy and denies all protected operations when no explicit policy is injected. Policy exceptions and malformed results fail closed with authorization_unavailable; explicit denials return forbidden. Test fixtures inject a test-only allow policy.
+
+Remaining gaps: this change does not configure real actor grants, persist policy decision IDs/versions into audit events, implement independent approval evidence verification, or provide durable atomic evidence consumption. Therefore ASR-01 is only partially mitigated; approve/reject remain unsuitable for production and the production gate remains closed. The test-only allow policy MUST NOT be used in deployment.
