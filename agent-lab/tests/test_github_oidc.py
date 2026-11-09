@@ -74,9 +74,9 @@ def claims(**overrides):
         "iat": 1_800_000_000,
         "nbf": 1_800_000_000,
         "repository": "loxchi-s/dorker-skills",
-        "repository_id": "123456",
-        "workflow_ref": "loxchi-s/dorker-skills/.github/workflows/agent-lab-ci.yml@refs/heads/main",
-        "sub": "repo:loxchi-s/dorker-skills:ref:refs/heads/main",
+        "repository_id": "1450173940",
+        "workflow_ref": "loxchi-s/dorker-skills/.github/workflows/artifact-gc-audit.yml@refs/heads/main",
+        "sub": "repo:loxchi-s/dorker-skills:environment:artifact-gc",
         "actor_id": "101",
         "actor": "creator",
     }
@@ -181,9 +181,9 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
         self.policy = GitHubOIDCPolicy(
             audience="dorker-artifact-gc",
             repository="loxchi-s/dorker-skills",
-            repository_id=123456,
+            repository_id=1450173940,
             allowed_workflow_refs=(
-                "loxchi-s/dorker-skills/.github/workflows/agent-lab-ci.yml@refs/heads/main",
+                "loxchi-s/dorker-skills/.github/workflows/artifact-gc-audit.yml@refs/heads/main",
             ),
             clock_skew_seconds=0,
             max_token_age_seconds=600,
@@ -234,7 +234,7 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
             database = os.path.join(directory, "audit.sqlite3")
             index = SQLiteArtifactIndex(database, blobs, identity_verifier=identity)
             claim = identity.acquire_claim()
-            plan = ArtifactDeletionPlan((), 0, 0, "a" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, SQLiteArtifactIndex._gc_plan_token(0, ()))
 
             index.record_gc_plan(plan, claim=claim)
 
@@ -252,11 +252,11 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
         self.policy = GitHubOIDCPolicy(
             audience="dorker-artifact-gc",
             repository="loxchi-s/dorker-skills",
-            repository_id=123456,
+            repository_id=1450173940,
             allowed_workflow_refs=(
-                "loxchi-s/dorker-skills/.github/workflows/agent-lab-ci.yml@refs/heads/main",
+                "loxchi-s/dorker-skills/.github/workflows/artifact-gc-audit.yml@refs/heads/main",
             ),
-            allowed_subjects=("repo:loxchi-s/dorker-skills:ref:refs/heads/main",),
+            allowed_subjects=("repo:loxchi-s/dorker-skills:environment:artifact-gc",),
             clock_skew_seconds=0,
             max_token_age_seconds=600,
         )
@@ -286,6 +286,8 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
             {"repository": "attacker/repo"},
             {"repository_id": "999"},
             {"workflow_ref": "attacker/workflow.yml@refs/heads/main"},
+            {"workflow_ref": "loxchi-s/dorker-skills/.github/workflows/agent-lab-ci.yml@refs/heads/main"},
+            {"sub": "repo:loxchi-s/dorker-skills:ref:refs/heads/main"},
             {"aud": "other-audience"},
             {"actor_id": "202"},
             {"actor": "forged"},
@@ -359,7 +361,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
                 identity_verifier=identity,
             )
             forged = GitHubActorClaim(202, "attacker", token)
-            plan = ArtifactDeletionPlan((), 0, 0, "b" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, SQLiteArtifactIndex._gc_plan_token(0, ()))
             with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
                 index.record_gc_plan(plan, claim=forged)
             self.assertEqual(index.list_audit_events(), [])
@@ -380,7 +382,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
                 ContentAddressedArtifactStore(root),
                 identity_verifier=identity,
             )
-            plan = ArtifactDeletionPlan((), 0, 0, "c" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, SQLiteArtifactIndex._gc_plan_token(0, ()))
             creator_claim = identity.acquire_claim()
             index.record_gc_plan(plan, claim=creator_claim)
 
