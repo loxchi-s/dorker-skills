@@ -290,7 +290,15 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
         repository_id = self.repository_id + 6
         key = "tampered-plan-index"
         token = hashlib.sha256((key + "-plan").encode()).hexdigest()
-        event, replayed = self.append_plan(key, token)
+        event, replayed = self.repository.append(
+            repository_id=repository_id,
+            idempotency_key=key,
+            request_hash=hashlib.sha256(key.encode()).hexdigest(),
+            event_type="gc_plan_created",
+            actor=self.actor,
+            details={"plan": {"fixture": key}},
+            approval_token=token,
+        )
         self.assertFalse(replayed)
 
         with psycopg.connect(admin_dsn) as admin:
