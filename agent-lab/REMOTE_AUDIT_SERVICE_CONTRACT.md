@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-**Contract + client implementation.** This document defines the boundary between a GitHub Actions runner and a future remote audit service. PR #13 implements a provider-neutral HTTP client with mock-transport tests; no service/server or remote store is implemented. It does not choose a provider, provision infrastructure, grant OIDC permissions, or enable a workflow. The SQLite adapter remains the only implemented store.
+**Contract + client + in-memory reference implementation.** PR #13 implements a provider-neutral HTTP client and a WSGI-compatible service reference backed only by a lock-serialized in-memory repository. The service tests exercise request validation, injected identity verification, idempotency, terminal-decision races, event pagination, and canonical hash-chain verification. This is a test harness: state is lost on process exit; it is not a durable store, deployed service, or production security boundary. The SQLite adapter remains the only durable implementation. No provider is selected, infrastructure provisioned, OIDC permission granted, or workflow enabled.
 
 The service is the authority for audit state. A runner must never report success from a local cache or SQLite fallback.
 
@@ -84,7 +84,7 @@ Returns readiness only when the authoritative database is reachable and the conf
 ## Idempotency and transaction rules
 
 1. Require an idempotency key on every write. Validate length and character set; never generate a replacement key during retry.
-2. Compute a canonical request hash over API version, operation, repository ID, verified actor ID, and normalized request payload. Exclude bearer credentials and volatile transport metadata.
+2. Compute a canonical request hash over API version, operation, repository ID, verified actor ID, and normalized request payload. The v1 encoding is UTF-8 JSON with recursively sorted keys, compact separators, ASCII escaping, and non-finite numbers forbidden. Exclude bearer credentials and volatile transport metadata.
 3. Enforce a unique database constraint on repository ID plus idempotency key. Store request hash and final response/event hash in the same transaction as the event.
 4. Same key + same request hash returns the original committed result, including original event hash and sequence. It must not append another event.
 5. Same key + different request hash returns `409 idempotency_conflict`; it must not mutate state.
@@ -153,6 +153,10 @@ The suite must run against a real transactional adapter before any remote-use cl
 | CR-06 | Runner B presents a different repository/workflow identity | Service rejects; no state mutation |
 | CR-07 | Paginate event history across runner instances | No gaps/duplicates; full chain verifies against trusted checkpoint |
 
+### In-memory reference implementation boundary
+
+`dorker_agent.remote_audit_service.RemoteAuditService` exposes a WSGI-compatible callable and a direct `handle()` test interface. `InMemoryAuditRepository` serializes mutations with a process-local lock and enforces same-key replay/conflict, one plan per token, creator/approver separation, and one terminal decision. The identity verifier is injected; production wiring must use `GitHubActionsOIDCVerifier` with a fixed `GitHubOIDCPolicy` and GitHub JWKS provider. The test verifier is deliberately fake and does not validate JWT signatures. The cursor encoding is a test-only offset and must be replaced by a server-authenticated opaque cursor for deployment. This implementation is intentionally non-durable and must never be used as an authoritative audit service.
+
 ### Required test topology
 
 - Two independent GitHub-hosted runner invocations, with no shared filesystem, workspace, cache, or artifact dependency.
@@ -176,7 +180,7 @@ The suite must run against a real transactional adapter before any remote-use cl
 
 1. Freeze this contract and add schema/version compatibility tests.
 2. Implement a provider-neutral HTTP client with bounded I/O, strict response parsing, and explicit indeterminate-commit handling. Do not include credentials or provider SDK dependencies in the domain layer.
-3. Implement a service-side verifier and transactional repository only after provider approval.
+3. The in-memory service reference and repository double are implemented for contract tests only. Implement a service-side deployment adapter and durable transactional repository only after provider approval; the in-memory repository does not satisfy durability, cross-process concurrency, or cross-run gates.
 4. Run FI tests against the real adapter, then CR tests across two independent runner invocations.
 5. Complete checkpoint, backup/restore, retention, monitoring, RPO/RTO, and independent authorization review.
 6. Only then propose a workflow change. Any `id-token: write`, environment protection, service secret, or privileged operation requires separate explicit approval.
