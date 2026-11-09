@@ -84,6 +84,14 @@ def claims(**overrides):
     return value
 
 
+def empty_gc_plan_token() -> str:
+    payload = json.dumps(
+        {"cutoff_unix_ns": 0, "candidates": []},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 class FakeHTTPResponse:
     def __init__(self, body, final_url):
         self._body = body
@@ -234,7 +242,7 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
             database = os.path.join(directory, "audit.sqlite3")
             index = SQLiteArtifactIndex(database, blobs, identity_verifier=identity)
             claim = identity.acquire_claim()
-            plan = ArtifactDeletionPlan((), 0, 0, "a" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, empty_gc_plan_token())
 
             index.record_gc_plan(plan, claim=claim)
 
@@ -361,7 +369,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
                 identity_verifier=identity,
             )
             forged = GitHubActorClaim(202, "attacker", token)
-            plan = ArtifactDeletionPlan((), 0, 0, "b" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, empty_gc_plan_token())
             with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
                 index.record_gc_plan(plan, claim=forged)
             self.assertEqual(index.list_audit_events(), [])
@@ -382,7 +390,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
                 ContentAddressedArtifactStore(root),
                 identity_verifier=identity,
             )
-            plan = ArtifactDeletionPlan((), 0, 0, "c" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, empty_gc_plan_token())
             creator_claim = identity.acquire_claim()
             index.record_gc_plan(plan, claim=creator_claim)
 
