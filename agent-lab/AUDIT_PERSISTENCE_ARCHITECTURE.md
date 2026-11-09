@@ -96,6 +96,12 @@ Before remote use, implement the service/client against that contract and pass t
 Current status: local SQLite idempotency is implemented and CI-tested; the HTTP client is implemented with mock-transport tests but has not been tested against a live service; remote ambiguous-commit recovery, remote persistence, and cross-run integration remain unimplemented and unvalidated.
 
 
-## In-memory Remote Audit Service Reference
+## Remote Audit Service Reference Repositories
 
 PR #13 adds `dorker_agent.remote_audit_service.RemoteAuditService` and `InMemoryAuditRepository` as a contract-test harness. The service validates plan structure and recomputes approval tokens, derives actor claims from the bearer JWT and delegates signature/claim verification to an injected verifier, scopes idempotency by repository ID, serializes writes under a process-local lock, enforces distinct-actor approval and a single terminal decision, and emits v1 canonical event hashes. It exposes a WSGI callable and direct request handler for tests. The in-memory repository is non-durable, does not survive process restart, and does not establish cross-run correctness. Deterministic service-state tests use a fake verifier; separate service-boundary tests use the real RS256 verifier with a generated test key and static test JWKS. Neither test path contacts GitHub's live JWKS endpoint. Production deployment still requires a separately reviewed verifier policy, durable transactional adapter, authenticated opaque cursors, and the full FI/CR suite.
+
+### SQLite remote-service reference adapter (2026-11-09)
+
+PR #13 now includes `SQLiteAuditRepository` for the remote-service reference contract. It uses a file-backed SQLite database, WAL mode, bounded busy timeout, `BEGIN IMMEDIATE` for serialized writes, and database uniqueness constraints for (repository, idempotency key), (repository, plan token) terminal decisions, and (repository, issuer, evidence ID) consumption. The event, idempotency record, plan/decision state, and consumed-evidence row commit or roll back together. Reopening a second repository instance against the same file preserves the event chain and replay state; tests exercise this and concurrent writes from independent connections.
+
+This is durable only on the same host and storage volume. It is not the managed remote store selected by the architecture, and it does not provide cross-run availability across ephemeral GitHub runners, backup/PITR, external signed checkpoints, multi-region failover, or production hardening. Do not synchronize the SQLite file between runners or use it as the authoritative production ledger.
