@@ -142,12 +142,12 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             with admin.cursor() as cursor:
                 cursor.execute("""
                     CREATE OR REPLACE FUNCTION remote_audit.test_reject_plan_insert()
-                    RETURNS trigger LANGUAGE plpgsql AS $
+                    RETURNS trigger LANGUAGE plpgsql AS $function$
                     BEGIN
                         RAISE EXCEPTION 'forced rollback integration test'
                             USING ERRCODE = 'P0001';
                     END;
-                    $
+                    $function$
                 """)
                 cursor.execute("""
                     CREATE TRIGGER test_reject_plan_insert
