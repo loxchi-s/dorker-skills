@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MAX_RESPONSE_BYTES = 256 * 1024
@@ -151,7 +151,113 @@ class RemoteAuditHttpClient:
 
     def lookup_idempotency(self, key: str) -> dict[str, object]:
         self._validate_key(key)
-        return self._request("GET", f"/v1/audit/idempotency/{key}", None, None)
+        return self._request("GET", f"/v1/audit/idempotency/{quote(key, safe='')}", None, None)
+
+    def list_audit_events(
+        self, *, limit: int = 100, cursor: str | None = None,
+    ) -> dict[str, object]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer from 1 to 1000")
+        if cursor is not None and (
+            not isinstance(cursor, str) or not cursor or len(cursor) > 2048
+            or any(ord(char) < 0x21 or ord(char) > 0x7e for char in cursor)
+        ):
+            raise ValueError("cursor must be 1..2048 printable ASCII characters")
+        query = f"?limit={limit}"
+        if cursor is not None:
+            query += f"&cursor={quote(cursor, safe='')}"
+        result = self._request("GET", "/v1/audit/events" + query, None, None)
+        self._validate_event_page(result)
+        return result
+
+    def list_all_audit_events(
+        self, *, limit: int = 100, max_pages: int = 1000,
+    ) -> list[dict[str, object]]:
+        if isinstance(max_pages, bool) or not isinstance(max_pages, int) or not 1 <= max_pages <= 10_000:
+            raise ValueError("max_pages must be an integer from 1 to 10000")
+        events: list[dict[str, object]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        for _ in range(max_pages):
+            page = self.list_audit_events(limit=limit, cursor=cursor)
+            batch = page["events"]
+            assert isinstance(batch, list)
+            events.extend(batch)
+            next_cursor = page.get("next_cursor")
+            if next_cursor is None:
+                self.verify_event_chain(events)
+                return events
+            if not isinstance(next_cursor, str) or next_cursor in seen_cursors:
+                raise AuditClientError("audit pagination cursor is invalid or repeated")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        raise AuditClientError("audit pagination exceeded max_pages")
+
+    @staticmethod
+    def _validate_event_page(page: dict[str, object]) -> None:
+        events = page.get("events")
+        if not isinstance(events, list) or len(events) > 1000:
+            raise AuditClientError("audit event page must contain at most 1000 events")
+        for event in events:
+            if not isinstance(event, dict):
+                raise AuditClientError("audit event must be an object")
+            sequence = event.get("sequence")
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+                raise AuditClientError("audit event has invalid sequence")
+            for field in ("event_id", "event_type", "actor_login", "timestamp"):
+                if not isinstance(event.get(field), str) or not event[field]:
+                    raise AuditClientError(f"audit event has invalid {field}")
+            actor_id = event.get("actor_id")
+            if isinstance(actor_id, bool) or not isinstance(actor_id, int) or actor_id < 1:
+                raise AuditClientError("audit event has invalid actor_id")
+            if not isinstance(event.get("details"), dict):
+                raise AuditClientError("audit event details must be an object")
+            if not isinstance(event.get("idempotency_key"), str):
+                raise AuditClientError("audit event has invalid idempotency_key")
+            for field in ("previous_hash", "event_hash"):
+                if not isinstance(event.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", event[field]):
+                    raise AuditClientError(f"audit event has invalid {field}")
+        next_cursor = page.get("next_cursor")
+        if next_cursor is not None and (
+            not isinstance(next_cursor, str) or not next_cursor
+            or len(next_cursor) > 2048
+        ):
+            raise AuditClientError("audit page has invalid next_cursor")
+
+    @staticmethod
+    def verify_event_chain(
+        events: list[dict[str, object]], *,
+        expected_start_sequence: int = 1,
+        expected_previous_hash: str = "0" * 64,
+        expected_head_hash: str | None = None,
+    ) -> bool:
+        if isinstance(expected_start_sequence, bool) or not isinstance(expected_start_sequence, int) or expected_start_sequence < 1:
+            raise ValueError("expected_start_sequence must be a positive integer")
+        if not isinstance(expected_previous_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_previous_hash):
+            raise ValueError("expected_previous_hash must be a SHA-256 digest")
+        if expected_head_hash is not None and (
+            not isinstance(expected_head_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_head_hash)
+        ):
+            raise ValueError("expected_head_hash must be a SHA-256 digest")
+        previous = expected_previous_hash
+        expected_sequence = expected_start_sequence
+        seen_ids: set[str] = set()
+        for event in events:
+            RemoteAuditHttpClient._validate_event_page({"events": [event]})
+            event_id = event["event_id"]
+            if event_id in seen_ids:
+                raise AuditClientError("duplicate audit event_id")
+            seen_ids.add(event_id)
+            if event["sequence"] != expected_sequence:
+                raise AuditClientError("audit event sequence gap or duplicate")
+            if event["previous_hash"] != previous:
+                raise AuditClientError("audit event previous_hash does not match chain")
+            previous = event["event_hash"]
+            expected_sequence += 1
+        if expected_head_hash is not None and previous != expected_head_hash:
+            raise AuditClientError("audit chain head does not match trusted checkpoint")
+        return True
 
     def _write(
         self, path: str, payload: dict[str, object], idempotency_key: str,
