@@ -2,11 +2,26 @@
 
 ## Status
 
-**Schema drafted in GitHub only. Not deployed and not integration-tested.**
+**Schema deployed to the user's Supabase Free project; PostgreSQL adapter is not implemented or integration-tested.**
 
-Target provider is the user's existing Supabase PostgreSQL project. This repository change does not connect to Supabase, inspect a project, apply SQL, create credentials, or incur costs.
+- Supabase project: `dorker-skills-audit` (Singapore)
+- Project ref: `ldqrztnihfguapsbwxpg`
+- Private schema: `remote_audit`
+- Tables: `events`, `heads`, `plans`, `decisions`, `consumed_evidence`
+- RLS: enabled on all five tables
+- Rows: zero at initial verification
+- Policies: none; `anon` and `authenticated` have no access
+- Current database grants observed: only `postgres` has table privileges
 
-The SQL migration creates a private `remote_audit` schema. It deliberately grants no access to `anon` or `authenticated` and does not expose these tables through the Data API. A future service-side adapter must connect using a server-side PostgreSQL connection and a dedicated least-privilege database role. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, Actions logs, or client-side configuration.
+The migration is recorded in Supabase as `remote_audit_schema_v1`; a separate migration enabled RLS. The Supabase security advisor currently reports five informational `rls_enabled_no_policy` findings. This is intentional until a dedicated backend database role and narrowly scoped policies are designed. Do not add permissive policies for `anon` or `authenticated`.
+
+The GitHub Actions workflow for the schema-contract commit completed successfully. That CI result validates repository checks only; it is not a PostgreSQL integration test.
+
+## Security and connection boundary
+
+The schema is private and is not intended for direct browser access through PostgREST. A future service-side adapter must use a dedicated server-side database login with only the privileges it requires, plus policies scoped to that database role. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
+
+GitHub Actions secrets cannot be populated through this repository workflow. Add any eventual connection secret through GitHub repository Settings > Secrets and variables > Actions, after the adapter and its least-privilege database role have been reviewed. Do not paste credentials into chat.
 
 ## Transaction contract for the adapter
 
@@ -31,15 +46,12 @@ The advisory lock is important for the first event as well as later writes: a ro
 - A database outage, integrity mismatch, or uncertain commit must never be reported as success.
 - External signed checkpoints and backup/restore remain required to detect whole-database rollback/replacement.
 
-## Deployment boundary
-
-The SQL file at `postgres/001_remote_audit_schema.sql` is a reviewed source artifact, not a live migration. Before applying it to the existing Supabase project, separately verify the project identity, current schema/migration state, database role, backup/restore plan, and maintenance window. Do not apply it to production as part of this GitHub-only task.
-
 ## Remaining implementation work
 
 - Implement a PostgreSQL DB-API repository adapter matching `AuditRepository`.
 - Pin the PostgreSQL driver and lock its dependency.
 - Add PostgreSQL integration tests for same-key replay/conflict, concurrent appends, competing decisions, evidence replay, transaction rollback, process restart, and lost response after commit.
-- Run the complete FI-01..FI-14 and CR-01..CR-07 suites against an isolated Supabase PostgreSQL database using two independent service processes/runners.
+- Run the complete FI-01..FI-14 and CR-01..CR-07 suites against an isolated PostgreSQL database using two independent service processes/runners.
 - Add authenticated cursor signing, external integrity checkpoints, backup/restore, bounded request deadlines/rate limits, and production authorization/evidence configuration.
-- Apply the migration only after explicit deployment approval; this GitHub change does not authorize that operation.
+- Create a dedicated backend database role and role-scoped RLS policies before any runtime connection is enabled.
+- Do not connect the application to Supabase or write production audit events until adapter tests pass and deployment is explicitly approved.
