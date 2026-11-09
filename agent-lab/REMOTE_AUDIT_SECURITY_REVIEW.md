@@ -83,3 +83,8 @@ Per-operation authorization, default-deny behavior, independent approval evidenc
 An injectable AuthorizationPolicy is now enforced at each protected route. The built-in DefaultDenyAuthorizationPolicy rejects all operations when no policy is configured. Exceptions and malformed policy results fail closed. Test-only allow behavior is injected explicitly by test fixtures.
 
 ASR-01 remains OPEN / PARTIALLY MITIGATED: no real actor grants are configured; independent approval evidence is not yet enforced; policy decision metadata is not yet persisted in the event chain. ASR-06 is partially mitigated at the route boundary because audit reads and idempotency lookup now require explicit operation grants, but no actual production grants or reader scope have been configured. Do not deploy or enable privileged artifact GC.
+
+
+## Approval evidence enforcement update (2026-11-09)
+
+The reference service now requires an injected approval evidence verifier for terminal decisions; the default verifier denies. Verified results are checked against repository, plan token, decision, and authenticated actor. Evidence metadata and authorization decision/version are included in the event hash; proof material is excluded. The in-memory repository consumes issuer/evidence ID under its process-local transaction lock and rejects reuse. This is contract-test coverage only: the test verifier is not cryptographic, and replay protection is not durable or cross-process. ASR-03 remains a critical blocker; production approval remains prohibited until a transactional adapter and independently reviewed provider verifier pass conformance tests.
