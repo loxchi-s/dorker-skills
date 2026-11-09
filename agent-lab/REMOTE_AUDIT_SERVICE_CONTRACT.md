@@ -55,7 +55,23 @@ Request body:
 
 ### GET /v1/audit/events
 
-Read-only, bounded pagination. The response includes sequence, event ID, event type, verified actor ID/login, timestamp, canonical details, idempotency key, previous hash, and event hash. Pagination uses an opaque cursor; clients must not infer missing events from page size.
+Read-only, bounded pagination. The response includes exactly these event fields: `sequence`, `event_id`, `event_type`, `actor_id`, `actor_login`, `timestamp`, `details`, `idempotency_key`, `request_hash`, `previous_hash`, and `event_hash`. `timestamp` is UTC RFC 3339 with exactly millisecond precision (`YYYY-MM-DDTHH:MM:SS.sssZ)); `details` is a JSON object. Pagination uses an opaque cursor; clients must not infer missing events from page size.
+
+### Canonical event hashing v1
+
+Both service and client MUST compute `event_hash` as SHA-256 over UTF-8 bytes of the canonical JSON object containing every event field above except `event_hash`. The object contains exactly: `sequence`, `event_id`, `event_type`, `actor_id`, `actor_login`, `timestamp`, `details`, `idempotency_key`, `request_hash`, and `previous_hash`. Serialize with recursively sorted object keys, compact separators (`,` and `:`), ASCII escaping enabled, and non-finite numbers forbidden. Arrays preserve order. Strings are not Unicode-normalized; the exact timestamp string and all string values are hashed as received. Hash output is 64 lowercase hexadecimal characters. `event_hash` itself is excluded to avoid recursion. Unknown or missing event fields MUST be rejected.
+
+The event hash therefore commits to the event identity, verified actor, timestamp, operation details, idempotency request hash, and previous chain link. A client MUST recompute this hash for every event before accepting the chain; checking only `previous_hash` links is insufficient.
+
+Conformance vector (canonical JSON bytes shown as a single line):
+
+```json
+{"actor_id":123,"actor_login":"test-actor","details":{},"event_id":"evt-1","event_type":"gc_plan_created","idempotency_key":"key-1","previous_hash":"0000000000000000000000000000000000000000000000000000000000000000","request_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sequence":1,"timestamp":"2026-11-09T00:00:00Z"}
+```
+
+Expected SHA-256: `7e020e26219c117229a29ad3da9fd87ee0124a872a5eba3edcb85e5070b5529c`.
+
+A partial history read MUST be verified against a trusted anchor containing both the first expected sequence and the previous event hash. A full-history read starts at sequence 1 with an all-zero previous hash. A checkpoint head hash, when supplied, MUST match the final verified event hash.
 
 ### GET /v1/audit/idempotency/{key}
 
