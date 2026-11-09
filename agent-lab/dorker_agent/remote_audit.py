@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, Protocol
 from urllib.parse import quote, urlsplit
 
@@ -227,6 +228,10 @@ class RemoteAuditHttpClient:
                     raise AuditClientError(f"audit event has invalid {field}")
             if not _TIMESTAMP.fullmatch(event["timestamp"]):
                 raise AuditClientError("audit event timestamp must be UTC RFC 3339 milliseconds")
+            try:
+                datetime.strptime(event["timestamp"], "%Y-%m-%dT%H:%M:%S.%fZ")
+            except ValueError as exc:
+                raise AuditClientError("audit event timestamp is not a valid UTC date-time") from exc
             actor_id = event.get("actor_id")
             if isinstance(actor_id, bool) or not isinstance(actor_id, int) or actor_id < 1:
                 raise AuditClientError("audit event has invalid actor_id")
