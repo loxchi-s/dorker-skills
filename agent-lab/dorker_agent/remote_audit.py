@@ -19,6 +19,7 @@ from urllib.parse import quote, urlsplit
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MAX_RESPONSE_BYTES = 256 * 1024
+_TIMESTAMP = re.compile(r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$")
 
 
 class AuditClientError(RuntimeError):
@@ -224,6 +225,8 @@ class RemoteAuditHttpClient:
             for field in ("event_id", "event_type", "actor_login", "timestamp"):
                 if not isinstance(event.get(field), str) or not event[field]:
                     raise AuditClientError(f"audit event has invalid {field}")
+            if not _TIMESTAMP.fullmatch(event["timestamp"]):
+                raise AuditClientError("audit event timestamp must be UTC RFC 3339 milliseconds")
             actor_id = event.get("actor_id")
             if isinstance(actor_id, bool) or not isinstance(actor_id, int) or actor_id < 1:
                 raise AuditClientError("audit event has invalid actor_id")
