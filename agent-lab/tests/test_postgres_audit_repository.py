@@ -31,7 +31,6 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 lambda: psycopg.connect(
                     _DSN, row_factory=dict_row, connect_timeout=5,
                     application_name="dorker-remote-audit-test",
-                    options=f"-c role={role}",
                 )
             )
         else:
@@ -58,6 +57,14 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             with conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT current_user, "
+                    "(SELECT rolcanlogin AND rolinherit AND NOT rolsuper AND NOT rolcreatedb "
+                    "AND NOT rolcreaterole AND NOT rolbypassrls FROM pg_roles "
+                    "WHERE rolname = current_user) AS login_role_restricted, "
+                    "NOT EXISTS (SELECT 1 FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "JOIN pg_roles owner_role ON owner_role.oid = c.relowner "
+                    "WHERE n.nspname = 'remote_audit' AND owner_role.rolname = current_user) "
+                    "AS not_table_owner, "
                     "pg_has_role(current_user, 'remote_audit_app', 'MEMBER') AS is_member, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'SELECT') AS can_select, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'INSERT') AS can_insert, "
@@ -73,6 +80,8 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 )
                 privileges = cursor.fetchone()
                 self.assertEqual(privileges["current_user"], "remote_audit_login")
+                self.assertTrue(privileges["login_role_restricted"])
+                self.assertTrue(privileges["not_table_owner"])
                 self.assertTrue(privileges["is_member"])
                 self.assertTrue(privileges["can_select"])
                 self.assertTrue(privileges["can_insert"])
