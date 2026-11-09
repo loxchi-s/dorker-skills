@@ -1,8 +1,9 @@
 -- Remote Audit PostgreSQL schema v1
 -- Target: Supabase PostgreSQL (private schema; not exposed through PostgREST).
 -- Apply only through a separately reviewed migration. This file is not auto-deployed.
--- The application must use one transaction per append and SELECT ... FOR UPDATE
--- on the repository head before allocating the next sequence.
+-- Each append must acquire pg_advisory_xact_lock for the repository ID inside
+-- its transaction before reading the chain or allocating a sequence. This also
+-- serializes the first append when no head row exists; a row lock alone cannot.
 
 BEGIN;
 
