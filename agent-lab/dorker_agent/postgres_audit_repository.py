@@ -373,4 +373,4 @@ class PostgresAuditRepository:
             raise self._translate_database_error(exc) from exc
         finally:
             if conn is not None:
-                conn.close()
+                self._close_quietly(conn)
