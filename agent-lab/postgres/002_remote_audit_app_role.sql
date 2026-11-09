@@ -2,15 +2,15 @@
 -- Create a separate LOGIN role manually and grant it membership in this role.
 -- This role intentionally has repository-wide access; it is not tenant isolation.
 
-DO $$
+BEGIN;
+
+DO $
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'remote_audit_app') THEN
     EXECUTE 'CREATE ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS';
   END IF;
 END
 $$;
-
-BEGIN;
 
 ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
 GRANT USAGE ON SCHEMA remote_audit TO remote_audit_app;
