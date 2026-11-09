@@ -132,5 +132,88 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
             client.record_plan(idempotency_key="unsafe/key", plan={})
 
 
+
+    def test_paginates_events_and_verifies_contiguous_chain(self):
+        first_hash = "1" * 64
+        second_hash = "2" * 64
+        calls = []
+        def event(sequence, previous, digest, event_id):
+            return {
+                "sequence": sequence, "event_id": event_id,
+                "event_type": "gc_plan_created", "actor_id": 123,
+                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
+                "details": {}, "idempotency_key": f"key-{sequence}",
+                "previous_hash": previous, "event_hash": digest,
+            }
+        def transport(method, url, headers, body, timeout):
+            calls.append(url)
+            if len(calls) == 1:
+                return HttpResponse(200, json.dumps({
+                    "events": [event(1, "0" * 64, first_hash, "evt-1")],
+                    "next_cursor": "cursor/one",
+                }).encode())
+            return HttpResponse(200, json.dumps({
+                "events": [event(2, first_hash, second_hash, "evt-2")],
+                "next_cursor": None,
+            }).encode())
+        client, _ = self.make_client(transport)
+        events = client.list_all_audit_events(limit=1)
+        self.assertEqual([item["sequence"] for item in events], [1, 2])
+        self.assertIn("cursor%2Fone", calls[1])
+
+    def test_rejects_sequence_gap_and_broken_previous_hash(self):
+        def event(sequence, previous, digest, event_id):
+            return {
+                "sequence": sequence, "event_id": event_id,
+                "event_type": "gc_plan_created", "actor_id": 123,
+                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
+                "details": {}, "idempotency_key": f"key-{sequence}",
+                "previous_hash": previous, "event_hash": digest,
+            }
+        first = event(1, "0" * 64, "1" * 64, "evt-1")
+        with self.assertRaises(AuditClientError):
+            RemoteAuditHttpClient.verify_event_chain([
+                first, event(3, "1" * 64, "3" * 64, "evt-3")
+            ])
+        with self.assertRaises(AuditClientError):
+            RemoteAuditHttpClient.verify_event_chain([
+                first, event(2, "f" * 64, "2" * 64, "evt-2")
+            ])
+
+    def test_rejects_checkpoint_head_mismatch_and_duplicate_event_id(self):
+        def event(sequence, previous, digest, event_id):
+            return {
+                "sequence": sequence, "event_id": event_id,
+                "event_type": "gc_plan_created", "actor_id": 123,
+                "actor_login": "test-actor", "timestamp": "2026-11-09T00:00:00Z",
+                "details": {}, "idempotency_key": f"key-{sequence}",
+                "previous_hash": previous, "event_hash": digest,
+            }
+        first = event(1, "0" * 64, "1" * 64, "evt-1")
+        with self.assertRaises(AuditClientError):
+            RemoteAuditHttpClient.verify_event_chain([first], expected_head_hash="f" * 64)
+        duplicate = event(2, "1" * 64, "2" * 64, "evt-1")
+        with self.assertRaises(AuditClientError):
+            RemoteAuditHttpClient.verify_event_chain([first, duplicate])
+
+    def test_rejects_repeated_pagination_cursor(self):
+        body = json.dumps({"events": [], "next_cursor": "same-cursor"}).encode()
+        client, _ = self.make_client(lambda *args: HttpResponse(200, body))
+        with self.assertRaises(AuditClientError):
+            client.list_all_audit_events(max_pages=3)
+
+    def test_rejects_malformed_event_page(self):
+        body = json.dumps({"events": [{"sequence": True}]}).encode()
+        client, _ = self.make_client(lambda *args: HttpResponse(200, body))
+        with self.assertRaises(AuditClientError):
+            client.list_audit_events()
+
+    def test_validates_pagination_bounds(self):
+        client, _ = self.make_client(lambda *args: HttpResponse(200, b'{"events":[]}'))
+        with self.assertRaises(ValueError):
+            client.list_audit_events(limit=0)
+        with self.assertRaises(ValueError):
+            client.list_audit_events(cursor="bad cursor")
+
 if __name__ == "__main__":
     unittest.main()
