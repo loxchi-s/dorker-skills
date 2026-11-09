@@ -82,7 +82,7 @@ BEGIN
       )
   ) OR (
     SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'remote_audit'
-  ) <> 11 THEN
+  ) NOT IN (0, 11) THEN
     RAISE EXCEPTION
       'unexpected remote_audit RLS policy exists; review it before applying app-role policies';
   END IF;
