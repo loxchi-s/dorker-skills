@@ -503,18 +503,7 @@ class SQLiteArtifactIndex:
             key=lambda item: (item.mtime_unix_ns, item.sha256),
         )[:policy.max_candidates]
         candidates = tuple(eligible)
-        payload = json.dumps(
-            {
-                "cutoff_unix_ns": cutoff,
-                "candidates": [
-                    {"sha256": item.sha256, "size_bytes": item.size_bytes,
-                     "mtime_unix_ns": item.mtime_unix_ns}
-                    for item in candidates
-                ],
-            },
-            sort_keys=True, separators=(",", ":"),
-        ).encode("utf-8")
-        token = hashlib.sha256(payload).hexdigest()
+        token = self._gc_plan_token(cutoff, candidates)
         return ArtifactDeletionPlan(
             candidates=candidates,
             total_bytes=sum(item.size_bytes for item in candidates),
@@ -547,16 +536,107 @@ class SQLiteArtifactIndex:
             raise ValueError("verified GitHub login is invalid")
         return actor
 
+    @staticmethod
+    def _gc_plan_token(cutoff_unix_ns: int, candidates: tuple[ArtifactObjectInfo, ...]) -> str:
+        payload = json.dumps(
+            {
+                "cutoff_unix_ns": cutoff_unix_ns,
+                "candidates": [
+                    {"sha256": item.sha256, "size_bytes": item.size_bytes,
+                     "mtime_unix_ns": item.mtime_unix_ns}
+                    for item in candidates
+                ],
+            },
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    @classmethod
+    def _validate_gc_plan(cls, plan: ArtifactDeletionPlan) -> None:
+        if not isinstance(plan.candidates, tuple):
+            raise ValueError("GC plan candidates must be an immutable tuple")
+        if isinstance(plan.cutoff_unix_ns, bool) or not isinstance(plan.cutoff_unix_ns, int):
+            raise ValueError("GC plan cutoff must be an integer")
+        if isinstance(plan.total_bytes, bool) or not isinstance(plan.total_bytes, int) or plan.total_bytes < 0:
+            raise ValueError("GC plan total_bytes must be a non-negative integer")
+        seen: set[str] = set()
+        previous_key: tuple[int, str] | None = None
+        total_bytes = 0
+        for item in plan.candidates:
+            if not isinstance(item, ArtifactObjectInfo):
+                raise ValueError("GC plan contains an invalid candidate")
+            if not isinstance(item.sha256, str) or not _DIGEST.fullmatch(item.sha256):
+                raise ValueError("GC plan contains an invalid digest")
+            for field_name in ("size_bytes", "mtime_unix_ns"):
+                value = getattr(item, field_name)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError(f"GC candidate {field_name} must be a non-negative integer")
+            if item.mtime_unix_ns > plan.cutoff_unix_ns:
+                raise ValueError("GC plan contains a candidate newer than its cutoff")
+            if item.sha256 in seen:
+                raise ValueError("GC plan contains duplicate candidate digests")
+            key = (item.mtime_unix_ns, item.sha256)
+            if previous_key is not None and key < previous_key:
+                raise ValueError("GC plan candidates are not canonically ordered")
+            seen.add(item.sha256)
+            previous_key = key
+            total_bytes += item.size_bytes
+        if total_bytes != plan.total_bytes:
+            raise ValueError("GC plan total_bytes does not match its candidates")
+        if (not isinstance(plan.approval_token, str)
+                or not _DIGEST.fullmatch(plan.approval_token)
+                or not hmac.compare_digest(
+                    cls._gc_plan_token(plan.cutoff_unix_ns, plan.candidates),
+                    plan.approval_token,
+                )):
+            raise ValueError("GC plan approval token does not match its candidate metadata")
+
+    @classmethod
+    def _validate_recorded_gc_plan(cls, approval_token: str, details_json: str) -> int:
+        try:
+            details = json.loads(details_json)
+            cutoff = details["cutoff_unix_ns"]
+            candidates_data = details["candidates"]
+            creator_id = details["github_actor_id"]
+            total_bytes = details["total_bytes"]
+            candidate_count = details["candidate_count"]
+            if (isinstance(cutoff, bool) or not isinstance(cutoff, int)
+                    or not isinstance(total_bytes, int) or isinstance(total_bytes, bool)
+                    or not isinstance(candidate_count, int) or isinstance(candidate_count, bool)
+                    or not isinstance(creator_id, int) or isinstance(creator_id, bool)
+                    or creator_id < 1 or not isinstance(candidates_data, list)):
+                raise ValueError
+            candidates: list[ArtifactObjectInfo] = []
+            for entry in candidates_data:
+                if not isinstance(entry, dict) or set(entry) != {"sha256", "size_bytes", "mtime_unix_ns"}:
+                    raise ValueError
+                candidates.append(ArtifactObjectInfo(
+                    sha256=entry["sha256"], size_bytes=entry["size_bytes"],
+                    mtime_unix_ns=entry["mtime_unix_ns"],
+                ))
+            plan = ArtifactDeletionPlan(
+                candidates=tuple(candidates), total_bytes=total_bytes,
+                cutoff_unix_ns=cutoff, approval_token=approval_token,
+            )
+            cls._validate_gc_plan(plan)
+            if candidate_count != len(candidates):
+                raise ValueError
+            return creator_id
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("recorded GC plan metadata or approval token is invalid") from exc
+
     def record_gc_plan(self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim) -> str:
         if not isinstance(plan, ArtifactDeletionPlan):
             raise TypeError("plan must be an ArtifactDeletionPlan")
+        self._validate_gc_plan(plan)
         actor = self._verified_actor(claim)
         details = {
             "candidate_count": len(plan.candidates),
             "total_bytes": plan.total_bytes,
             "cutoff_unix_ns": plan.cutoff_unix_ns,
             "candidates": [
-                {"sha256": item.sha256, "size_bytes": item.size_bytes}
+                {"sha256": item.sha256, "size_bytes": item.size_bytes,
+                 "mtime_unix_ns": item.mtime_unix_ns}
                 for item in plan.candidates
             ],
             "github_actor_id": actor.github_id,
@@ -672,9 +752,11 @@ class SQLiteArtifactIndex:
                 if plan_row is None:
                     db.rollback()
                     raise ValueError("approval token has no recorded GC plan")
-                creator_id = json.loads(plan_row["details_json"]).get("github_actor_id")
+                creator_id = self._validate_recorded_gc_plan(
+                    approval_token, plan_row["details_json"],
+                )
                 approver_id = details.get("github_actor_id")
-                if not isinstance(creator_id, int) or creator_id == approver_id:
+                if creator_id == approver_id:
                     db.rollback()
                     raise ValueError("GC plan approval requires a different GitHub actor")
             count = db.execute("SELECT COUNT(*) FROM artifact_audit_log").fetchone()[0]
