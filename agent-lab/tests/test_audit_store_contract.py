@@ -58,10 +58,10 @@ class SQLiteAuditStoreContractTests(unittest.TestCase):
 
     def test_append_reopen_read_and_verify(self) -> None:
         plan = self.make_plan()
-        created_hash = self.store.record_gc_plan(plan, claim=claim(11, "creator"))
+        created_hash = self.store.record_gc_plan(plan, claim=claim(11, "creator"), idempotency_key="contract-store-9")
         self.store.record_gc_approval(
             plan.approval_token, claim=claim(12, "approver"), approved=True,
-        )
+        , idempotency_key="contract-store-8")
 
         reopened = self.make_store()
         events = reopened.list_audit_events()
@@ -73,31 +73,31 @@ class SQLiteAuditStoreContractTests(unittest.TestCase):
 
     def test_duplicate_plan_and_terminal_decision_are_rejected(self) -> None:
         plan = self.make_plan()
-        self.store.record_gc_plan(plan, claim=claim(11, "creator"))
+        self.store.record_gc_plan(plan, claim=claim(11, "creator"), idempotency_key="contract-store-7")
         with self.assertRaisesRegex(ValueError, "already been recorded"):
-            self.store.record_gc_plan(plan, claim=claim(13, "other"))
+            self.store.record_gc_plan(plan, claim=claim(13, "other"), idempotency_key="contract-store-6")
 
         self.store.record_gc_approval(
             plan.approval_token, claim=claim(12, "approver"), approved=True,
-        )
+        , idempotency_key="contract-store-5")
         with self.assertRaisesRegex(ValueError, "already has a recorded decision"):
             self.store.record_gc_approval(
                 plan.approval_token, claim=claim(14, "another"), approved=False,
-            )
+            , idempotency_key="contract-store-4")
         self.assertEqual(len(self.store.list_audit_events()), 2)
 
     def test_creator_cannot_approve_own_plan(self) -> None:
         plan = self.make_plan()
-        self.store.record_gc_plan(plan, claim=claim(11, "creator"))
+        self.store.record_gc_plan(plan, claim=claim(11, "creator"), idempotency_key="contract-store-3")
         with self.assertRaisesRegex(ValueError, "different GitHub actor"):
             self.store.record_gc_approval(
                 plan.approval_token, claim=claim(11, "creator"), approved=True,
-            )
+            , idempotency_key="contract-store-2")
         self.assertEqual(len(self.store.list_audit_events()), 1)
 
     def test_concurrent_terminal_decisions_allow_exactly_one_writer(self) -> None:
         plan = self.make_plan()
-        self.store.record_gc_plan(plan, claim=claim(11, "creator"))
+        self.store.record_gc_plan(plan, claim=claim(11, "creator"), idempotency_key="contract-store-1")
         stores = [self.make_store(), self.make_store()]
 
         def decide(args):
@@ -107,7 +107,7 @@ class SQLiteAuditStoreContractTests(unittest.TestCase):
                     plan.approval_token,
                     claim=claim(actor_id, f"approver{actor_id}"),
                     approved=True,
-                )
+                , idempotency_key=f"concurrent-decision-{actor_id}")
                 return "committed"
             except ValueError:
                 return "rejected"
