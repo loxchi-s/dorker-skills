@@ -172,6 +172,9 @@ class RemoteAuditHttpClient:
 
     def list_all_audit_events(
         self, *, limit: int = 100, max_pages: int = 1000,
+        expected_start_sequence: int = 1,
+        expected_previous_hash: str = "0" * 64,
+        expected_head_hash: str | None = None,
     ) -> list[dict[str, object]]:
         if isinstance(max_pages, bool) or not isinstance(max_pages, int) or not 1 <= max_pages <= 10_000:
             raise ValueError("max_pages must be an integer from 1 to 10000")
@@ -185,7 +188,11 @@ class RemoteAuditHttpClient:
             events.extend(batch)
             next_cursor = page.get("next_cursor")
             if next_cursor is None:
-                self.verify_event_chain(events)
+                self.verify_event_chain(
+                    events, expected_start_sequence=expected_start_sequence,
+                    expected_previous_hash=expected_previous_hash,
+                    expected_head_hash=expected_head_hash,
+                )
                 return events
             if not isinstance(next_cursor, str) or next_cursor in seen_cursors:
                 raise AuditClientError("audit pagination cursor is invalid or repeated")
@@ -205,7 +212,7 @@ class RemoteAuditHttpClient:
                 raise AuditClientError("audit event must be an object")
             allowed = {
                 "sequence", "event_id", "event_type", "actor_id", "actor_login",
-                "timestamp", "details", "idempotency_key", "previous_hash", "event_hash",
+                "timestamp", "details", "idempotency_key", "request_hash", "previous_hash", "event_hash",
             }
             if set(event) - allowed:
                 raise AuditClientError("audit event contains unknown fields")
@@ -220,9 +227,9 @@ class RemoteAuditHttpClient:
                 raise AuditClientError("audit event has invalid actor_id")
             if not isinstance(event.get("details"), dict):
                 raise AuditClientError("audit event details must be an object")
-            if not isinstance(event.get("idempotency_key"), str):
+            if not isinstance(event.get("idempotency_key"), str) or not event["idempotency_key"]:
                 raise AuditClientError("audit event has invalid idempotency_key")
-            for field in ("previous_hash", "event_hash"):
+            for field in ("request_hash", "previous_hash", "event_hash"):
                 if not isinstance(event.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", event[field]):
                     raise AuditClientError(f"audit event has invalid {field}")
         next_cursor = page.get("next_cursor")
@@ -231,6 +238,26 @@ class RemoteAuditHttpClient:
             or len(next_cursor) > 2048
         ):
             raise AuditClientError("audit page has invalid next_cursor")
+
+    @staticmethod
+    def compute_event_hash(event: dict[str, object]) -> str:
+        """Hash the v1 canonical remote event payload (excluding event_hash)."""
+        fields = (
+            "sequence", "event_id", "event_type", "actor_id", "actor_login",
+            "timestamp", "details", "idempotency_key", "request_hash", "previous_hash",
+        )
+        if not isinstance(event, dict) or set(event) != set(fields) | {"event_hash"}:
+            raise AuditClientError("audit event does not match the canonical v1 schema")
+        payload = {field: event[field] for field in fields}
+        try:
+            encoded = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=True, allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise AuditClientError("audit event is not canonically serializable") from exc
+        import hashlib
+        return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
     def verify_event_chain(
@@ -261,6 +288,9 @@ class RemoteAuditHttpClient:
                 raise AuditClientError("audit event sequence gap or duplicate")
             if event["previous_hash"] != previous:
                 raise AuditClientError("audit event previous_hash does not match chain")
+            calculated_hash = RemoteAuditHttpClient.compute_event_hash(event)
+            if not __import__("hmac").compare_digest(calculated_hash, event["event_hash"]):
+                raise AuditClientError("audit event hash does not match canonical payload")
             previous = event["event_hash"]
             expected_sequence += 1
         if expected_head_hash is not None and previous != expected_head_hash:
