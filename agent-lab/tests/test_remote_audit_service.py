@@ -62,10 +62,10 @@ class RemoteAuditServiceTests(unittest.TestCase):
         return status, json.loads(payload)
 
     @staticmethod
-    def make_plan(*, size=128):
+    def make_plan(*, size=128, digest="a" * 64):
         cutoff = 1_800_000_000_000_000_000
         candidates = [{
-            "sha256": "a" * 64,
+            "sha256": digest,
             "size_bytes": size,
             "mtime_unix_ns": cutoff - 1,
         }]
@@ -198,6 +198,21 @@ class RemoteAuditServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(lookup["event_hash"], plan_result["event_hash"])
         self.assertTrue(lookup["replayed"])
+
+
+    def test_event_page_is_server_bounded_even_when_client_requests_1000(self):
+        for index in range(11):
+            digest = f"{index + 1:064x}"
+            status, _ = self.create_plan(
+                key=f"plan-{index}", plan=self.make_plan(digest=digest),
+            )
+            self.assertEqual(status, 200)
+        status, page = self.request(
+            "GET", "/v1/audit/events?limit=1000", token=self.creator,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(page["events"]), 10)
+        self.assertIsNotNone(page["next_cursor"])
 
     def test_health_reports_test_only_and_chain_readiness(self):
         status, health = self.request("GET", "/v1/audit/health")
