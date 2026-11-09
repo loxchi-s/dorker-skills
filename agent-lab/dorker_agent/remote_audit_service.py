@@ -63,7 +63,7 @@ def _strict_object(raw: bytes) -> dict[str, object]:
 
     try:
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicates)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise AuditServiceError(400, "invalid_request", "request JSON is invalid") from exc
     if not isinstance(value, dict):
         raise AuditServiceError(400, "invalid_request", "request body must be an object")
@@ -93,7 +93,9 @@ def _claim_from_bearer(token: str) -> GitHubActorClaim:
     if len(parts) != 3:
         raise AuditServiceError(401, "unauthenticated", "bearer token is malformed")
     try:
-        raw = base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))
+        raw = base64.b64decode(
+            parts[1] + "=" * (-len(parts[1]) % 4), altchars=b"-_", validate=True,
+        )
         payload = _strict_object(raw)
     except (ValueError, AuditServiceError) as exc:
         raise AuditServiceError(401, "unauthenticated", "bearer token claims are malformed") from exc
@@ -282,8 +284,18 @@ class RemoteAuditService:
         body: bytes = b"",
     ) -> tuple[int, dict[str, str], bytes]:
         request_id = str(uuid.uuid4())
-        headers = {key.lower(): value for key, value in (headers or {}).items()}
         try:
+            if not isinstance(method, str) or method not in {"GET", "POST"}:
+                raise AuditServiceError(400, "invalid_request", "HTTP method is invalid")
+            if not isinstance(target, str) or not target or len(target) > 4096:
+                raise AuditServiceError(400, "invalid_request", "request target is invalid or oversized")
+            if not isinstance(body, bytes):
+                raise AuditServiceError(400, "invalid_request", "request body must be bytes")
+            if headers is not None and not isinstance(headers, dict):
+                raise AuditServiceError(400, "invalid_request", "request headers are invalid")
+            if headers is not None and any(not isinstance(k, str) or not isinstance(v, str) for k, v in headers.items()):
+                raise AuditServiceError(400, "invalid_request", "request headers are invalid")
+            headers = {key.lower(): value for key, value in (headers or {}).items()}
             if len(body) > _MAX_BODY_BYTES:
                 raise AuditServiceError(413, "invalid_request", "request body exceeds 64 KiB")
             parsed = urlsplit(target)
@@ -346,7 +358,9 @@ class RemoteAuditService:
                     raise AuditServiceError(404, "not_found", "idempotency key was not found")
                 return self._json(200, self._success(event, key, True, request_id))
             if method == "GET" and path == "/v1/audit/events":
-                query = parse_qs(parsed.query, strict_parsing=True)
+                if len(parsed.query) > 2048:
+                    raise AuditServiceError(400, "invalid_request", "event query is oversized")
+                query = parse_qs(parsed.query, strict_parsing=True, max_num_fields=2)
                 if set(query) - {"limit", "cursor"} or any(len(v) != 1 for v in query.values()):
                     raise AuditServiceError(400, "invalid_request", "event query parameters are invalid")
                 raw_limit = query.get("limit", ["100"])[0]
@@ -366,7 +380,7 @@ class RemoteAuditService:
             return self._error(exc.status, exc.code, str(exc), request_id, exc.retryable)
         except OIDCVerificationError:
             return self._error(401, "unauthenticated", "OIDC identity could not be verified", request_id)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
             return self._error(400, "invalid_request", "request fields are invalid", request_id)
 
     def _authenticate(self, headers: dict[str, str]) -> VerifiedGitHubActor:
