@@ -406,6 +406,7 @@ class SignedOIDCServiceTests(unittest.TestCase):
             repository_id=1450173940,
             identity_verifier=self.verifier,
             repository=self.repository,
+            authorization_policy=TestAllowAuthorizationPolicy(),
         )
 
     def signed_token(self, **overrides):
