@@ -45,7 +45,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             request_hash=hashlib.sha256(key.encode()).hexdigest(),
             event_type="gc_plan_created",
             actor=self.actor,
-            details={"plan": {"fixture": key}},
+            details={"plan": {"approval_token": token, "fixture": key}},
             approval_token=token,
         )
 
@@ -205,7 +205,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 request_hash=hashlib.sha256((key + "-request").encode()).hexdigest(),
                 event_type="gc_plan_created",
                 actor=self.actor,
-                details={"plan": {"index": index}},
+                details={"plan": {"approval_token": token, "index": index}},
                 approval_token=token,
             )
 
@@ -229,7 +229,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 request_hash=request_hash,
                 event_type="gc_plan_created",
                 actor=self.actor,
-                details={"plan": {"fixture": key}},
+                details={"plan": {"approval_token": token, "fixture": key}},
                 approval_token=token,
             )
 
@@ -260,7 +260,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             request_hash=hashlib.sha256((key + "-request").encode()).hexdigest(),
             event_type="gc_plan_created",
             actor=self.actor,
-            details={"plan": {"fixture": key}},
+            details={"plan": {"approval_token": token, "fixture": key}},
             approval_token=token,
         )
         self.assertFalse(replayed)
@@ -296,7 +296,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             request_hash=hashlib.sha256(key.encode()).hexdigest(),
             event_type="gc_plan_created",
             actor=self.actor,
-            details={"plan": {"fixture": key}},
+            details={"plan": {"approval_token": token, "fixture": key}},
             approval_token=token,
         )
         self.assertFalse(replayed)
@@ -351,7 +351,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                     request_hash=hashlib.sha256(key.encode()).hexdigest(),
                     event_type="gc_plan_created",
                     actor=self.actor,
-                    details={"plan": {"fixture": key}},
+                    details={"plan": {"approval_token": token, "fixture": key}},
                     approval_token=hashlib.sha256(key.encode()).hexdigest(),
                 )
             self.assertEqual(failure.exception.code, "repository_unavailable")
