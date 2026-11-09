@@ -195,12 +195,20 @@ class RemoteAuditHttpClient:
 
     @staticmethod
     def _validate_event_page(page: dict[str, object]) -> None:
+        if set(page) - {"events", "next_cursor"}:
+            raise AuditClientError("audit event page contains unknown fields")
         events = page.get("events")
         if not isinstance(events, list) or len(events) > 1000:
             raise AuditClientError("audit event page must contain at most 1000 events")
         for event in events:
             if not isinstance(event, dict):
                 raise AuditClientError("audit event must be an object")
+            allowed = {
+                "sequence", "event_id", "event_type", "actor_id", "actor_login",
+                "timestamp", "details", "idempotency_key", "previous_hash", "event_hash",
+            }
+            if set(event) - allowed:
+                raise AuditClientError("audit event contains unknown fields")
             sequence = event.get("sequence")
             if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
                 raise AuditClientError("audit event has invalid sequence")
