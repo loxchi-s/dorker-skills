@@ -51,6 +51,9 @@ jobs:
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;"
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/001_remote_audit_schema.sql
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          # Reapply both migrations to verify safe idempotent reruns.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/001_remote_audit_schema.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE remote_audit_login NOLOGIN INHERIT; GRANT remote_audit_app TO remote_audit_login;"
       - name: Run agent lab tests
         run: python -m unittest discover -s agent-lab/tests -v
