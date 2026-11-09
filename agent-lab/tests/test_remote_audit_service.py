@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sqlite3
 import threading
 import tempfile
 import time
@@ -407,6 +408,77 @@ class RemoteAuditServiceTests(unittest.TestCase):
             )
             self.assertEqual(status, 409)
             self.assertEqual(json.loads(payload)["error"]["code"], "approval_evidence_replayed")
+
+    def test_sqlite_capacity_failure_rolls_back_without_consuming_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "capacity.sqlite3"
+            limited = SQLiteAuditRepository(database, max_events=1)
+            service = RemoteAuditService(
+                repository_id=1450173940, identity_verifier=TestIdentityVerifier(),
+                repository=limited, authorization_policy=TestAllowAuthorizationPolicy(),
+                approval_evidence_verifier=TestApprovalEvidenceVerifier(),
+            )
+            plan = self.make_plan()
+            status, _, _ = service.handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "capacity-plan", "plan": plan}).encode(),
+            )
+            self.assertEqual(status, 200)
+            decision = {
+                "idempotency_key": "capacity-decision", "approval_token": plan["approval_token"],
+                "decision": "approve", "evidence": {"proof": "test-only"},
+            }
+            status, _, payload = service.handle(
+                "POST", "/v1/audit/decisions", {"Authorization": f"Bearer {self.approver_a}"},
+                json.dumps(decision).encode(),
+            )
+            self.assertEqual(status, 503)
+            self.assertEqual(json.loads(payload)["error"]["code"], "unavailable")
+            self.assertEqual(len(limited.list_events(1450173940, 0, 10)), 1)
+
+            recovered = SQLiteAuditRepository(database, max_events=10)
+            recovered_service = RemoteAuditService(
+                repository_id=1450173940, identity_verifier=TestIdentityVerifier(),
+                repository=recovered, authorization_policy=TestAllowAuthorizationPolicy(),
+                approval_evidence_verifier=TestApprovalEvidenceVerifier(),
+            )
+            status, _, payload = recovered_service.handle(
+                "POST", "/v1/audit/decisions", {"Authorization": f"Bearer {self.approver_a}"},
+                json.dumps(decision).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(payload)["sequence"], 2)
+
+    def test_sqlite_head_mismatch_blocks_reads_and_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "head.sqlite3"
+            repository = SQLiteAuditRepository(database)
+            service = RemoteAuditService(
+                repository_id=1450173940, identity_verifier=TestIdentityVerifier(),
+                repository=repository, authorization_policy=TestAllowAuthorizationPolicy(),
+                approval_evidence_verifier=TestApprovalEvidenceVerifier(),
+            )
+            plan = self.make_plan()
+            status, _, _ = service.handle(
+                "POST", "/v1/audit/plans", {"Authorization": f"Bearer {self.creator}"},
+                json.dumps({"idempotency_key": "head-plan", "plan": plan}).encode(),
+            )
+            self.assertEqual(status, 200)
+            db = sqlite3.connect(database)
+            try:
+                db.execute(
+                    "UPDATE remote_audit_heads SET event_hash=? WHERE repository_id=?",
+                    ("f" * 64, 1450173940),
+                )
+                db.commit()
+            finally:
+                db.close()
+            self.assertFalse(repository.verify(1450173940))
+            status, _, payload = service.handle(
+                "GET", "/v1/audit/events?limit=10", {"Authorization": f"Bearer {self.creator}"}, b"",
+            )
+            self.assertEqual(status, 422)
+            self.assertEqual(json.loads(payload)["error"]["code"], "integrity_violation")
 
     def test_sqlite_repository_serializes_concurrent_terminal_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
