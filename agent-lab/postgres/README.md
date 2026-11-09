@@ -2,7 +2,7 @@
 
 ## Status
 
-**Schema and least-privilege database role deployed to the user's Supabase Free project; the application Runtime adapter is not yet connected.**
+**PostgreSQL adapter implemented and CI-tested; schema, RLS, privilege role, indexes, and restricted LOGIN role deployed to Supabase. Runtime password and live DSN connection are not configured.**
 
 - Supabase project: `dorker-skills-audit` (Singapore)
 - Project ref: `ldqrztnihfguapsbwxpg`
@@ -12,16 +12,17 @@
 - Rows: zero at initial verification
 - Policies: 11 role-scoped policies for `remote_audit_app`; no policies for `anon` or `authenticated`
 - `remote_audit_app`: NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, NOINHERIT
+- `remote_audit_login`: LOGIN, INHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS; only membership is `remote_audit_app`; no password has been assigned
 - Table grants: SELECT/INSERT on append-only tables; SELECT/INSERT/UPDATE on `heads`
 - RLS enabled on all five tables; table owner remains `postgres`
 
-Applied migrations: `remote_audit_schema_v1`, `enable_remote_audit_rls`, `remote_audit_app_role_v1`, and `remote_audit_fk_indexes_v1`. Supabase Security Advisor returned no lints after role/policy deployment. Performance Advisor's five missing-FK-index findings were addressed by migration 003; recheck the advisor after its next refresh. The `remote_audit_app` role is repository-wide trusted service access, not tenant isolation.
+Applied migrations: `remote_audit_schema_v1`, `enable_remote_audit_rls`, `remote_audit_app_role_v1`, `remote_audit_fk_indexes_v1`, and `remote_audit_login_role_v1`. Supabase Security Advisor returned no lints after role/policy deployment. Performance Advisor's five missing-FK-index findings were addressed by migration 003; recheck the advisor after its next refresh. The `remote_audit_app` role is repository-wide trusted service access, not tenant isolation.
 
 The GitHub Actions workflow for the schema-contract commit completed successfully. That CI result validates repository checks only; it is not a PostgreSQL integration test.
 
 ## Security and connection boundary
 
-The schema is private and is not intended for direct browser access through PostgREST. A future service-side adapter must use a dedicated server-side database login with only the privileges it requires, plus policies scoped to that database role. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
+The schema is private and is not intended for direct browser access through PostgREST. The service-side adapter uses `remote_audit_login`, which inherits only the `remote_audit_app` privilege role. Its password is intentionally unset; provision it through a secure credential workflow before testing a live connection. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
 
 GitHub Actions secrets cannot be populated through this repository workflow. Add any eventual connection secret through GitHub repository Settings > Secrets and variables > Actions, after the adapter and its least-privilege database role have been reviewed. Do not paste credentials into chat.
 
@@ -50,10 +51,9 @@ The advisory lock is important for the first event as well as later writes: a ro
 
 ## Remaining implementation work
 
-- Implement a PostgreSQL DB-API repository adapter matching `AuditRepository`.
-- Pin the PostgreSQL driver and lock its dependency.
-- Add PostgreSQL integration tests for same-key replay/conflict, concurrent appends, competing decisions, evidence replay, transaction rollback, process restart, and lost response after commit.
-- Run the complete FI-01..FI-14 and CR-01..CR-07 suites against an isolated PostgreSQL database using two independent service processes/runners.
+- Provision a strong password for `remote_audit_login` through Supabase's secure role/credential UI; never put it in SQL migration files, GitHub source, logs, or chat.
+- Configure the runtime DSN only in the server-side secret manager and run a direct-login smoke test against Supabase.
+- Extend integration coverage to separate OS processes/runners and process restart; current concurrency tests use independent DB connections from threads.
 - Add authenticated cursor signing, external integrity checkpoints, backup/restore, bounded request deadlines/rate limits, and production authorization/evidence configuration.
-- Create a separate restricted LOGIN role and grant it membership in `remote_audit_app` only after reviewing the runtime secret-handling and connection lifecycle. Do not use `postgres` or `service_role` as the application login.
+- Configure production authorization/evidence policy, external signed integrity checkpoints, backup/restore, and bounded request deadlines/rate limits before production use.
 - Do not connect the application to Supabase or write production audit events until adapter tests pass and deployment is explicitly approved.
