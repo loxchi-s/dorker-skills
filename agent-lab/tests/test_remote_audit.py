@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import json
+import unittest
+
+from dorker_agent.remote_audit import (
+    AuditClientError,
+    AuditOutcomeIndeterminate,
+    AuditRequestRejected,
+    HttpResponse,
+    RemoteAuditHttpClient,
+)
+
+
+def success(key: str, *, replayed: bool = False) -> bytes:
+    return json.dumps({
+        "request_id": "req-1",
+        "idempotency_key": key,
+        "event_id": "evt-1",
+        "sequence": 7,
+        "event_hash": "a" * 64,
+        "replayed": replayed,
+    }).encode()
+
+
+class RemoteAuditHttpClientTests(unittest.TestCase):
+    def make_client(self, transport, *, attempts=3):
+        sleeps = []
+        client = RemoteAuditHttpClient(
+            "https://audit.example.test",
+            lambda: "test-oidc-token",
+            transport=transport,
+            max_attempts=attempts,
+            backoff_base_seconds=0.01,
+            sleeper=sleeps.append,
+            jitter=lambda low, high: high,
+        )
+        return client, sleeps
+
+    def test_commit_then_timeout_retries_same_key_and_body(self):
+        calls = []
+        def transport(method, url, headers, body, timeout):
+            calls.append((method, url, headers.copy(), body, timeout))
+            if len(calls) == 1:
+                # Simulates a committed request whose response was lost.
+                raise TimeoutError("response lost after commit")
+            return HttpResponse(200, success("plan-key-1", replayed=True))
+
+        client, sleeps = self.make_client(transport)
+        result = client.record_plan(
+            idempotency_key="plan-key-1",
+            plan={"approval_token": "b" * 64, "candidates": []},
+        )
+        self.assertTrue(result["replayed"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][3], calls[1][3])
+        self.assertEqual(calls[0][2]["Idempotency-Key"], calls[1][2]["Idempotency-Key"])
+        self.assertEqual(calls[0][3], json.dumps({
+            "idempotency_key": "plan-key-1",
+            "plan": {"approval_token": "b" * 64, "candidates": []},
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode())
+        self.assertEqual(len(sleeps), 1)
+
+    def test_exhausted_write_timeout_is_indeterminate(self):
+        calls = []
+        def transport(*args):
+            calls.append(args)
+            raise TimeoutError("network timeout")
+        client, _ = self.make_client(transport, attempts=2)
+        with self.assertRaises(AuditOutcomeIndeterminate):
+            client.record_decision(
+                idempotency_key="decision-1",
+                approval_token="c" * 64,
+                decision="approve",
+            )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][3], calls[1][3])
+
+    def test_non_retryable_conflict_is_not_retried(self):
+        calls = []
+        body = json.dumps({"error": {
+            "code": "idempotency_conflict",
+            "retryable": False,
+        }}).encode()
+        def transport(*args):
+            calls.append(args)
+            return HttpResponse(409, body)
+        client, sleeps = self.make_client(transport)
+        with self.assertRaises(AuditRequestRejected):
+            client.record_plan(idempotency_key="same-key", plan={"x": 1})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sleeps, [])
+
+    def test_retries_retryable_503_with_same_payload(self):
+        calls = []
+        failure = json.dumps({"error": {"code": "unavailable", "retryable": True}}).encode()
+        def transport(method, url, headers, body, timeout):
+            calls.append(body)
+            if len(calls) == 1:
+                return HttpResponse(503, failure)
+            return HttpResponse(200, success("plan-key-2"))
+        client, _ = self.make_client(transport)
+        client.record_plan(idempotency_key="plan-key-2", plan={"x": 1})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+
+    def test_rejects_duplicate_json_keys_and_oversized_response(self):
+        duplicate = b'{"request_id":"a","request_id":"b"}'
+        client, _ = self.make_client(lambda *args: HttpResponse(200, duplicate))
+        with self.assertRaises(AuditClientError):
+            client.lookup_idempotency("lookup-1")
+        client, _ = self.make_client(lambda *args: HttpResponse(200, b" " * (256 * 1024 + 1)))
+        with self.assertRaises(AuditClientError):
+            client.lookup_idempotency("lookup-2")
+
+    def test_rejects_insecure_or_credentialed_base_url(self):
+        for url in (
+            "http://audit.example.test",
+            "https://user:secret@audit.example.test",
+            "https://audit.example.test?token=x",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                RemoteAuditHttpClient(url, lambda: "token")
+
+    def test_decision_enum_and_key_are_validated(self):
+        client, _ = self.make_client(lambda *args: HttpResponse(200, success("key")))
+        with self.assertRaises(ValueError):
+            client.record_decision(
+                idempotency_key="key", approval_token="d" * 64, decision="maybe",
+            )
+        with self.assertRaises(ValueError):
+            client.record_plan(idempotency_key="unsafe/key", plan={})
+
+
+if __name__ == "__main__":
+    unittest.main()
