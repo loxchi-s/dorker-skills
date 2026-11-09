@@ -20,7 +20,8 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             import psycopg  # noqa: F401
         except ImportError as exc:
             raise unittest.SkipTest("psycopg is not installed") from exc
-        role = os.environ.get("DORKER_TEST_POSTGRES_ROLE")
+        cls.test_role = os.environ.get("DORKER_TEST_POSTGRES_ROLE")
+        role = cls.test_role
         if role:
             if not role.replace("_", "").isalnum():
                 raise ValueError("invalid test database role")
@@ -48,6 +49,35 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             details={"plan": {"fixture": key}},
             approval_token=token,
         )
+
+    def test_role_is_rls_scoped_and_cannot_delete(self):
+        if not self.test_role:
+            self.skipTest("DORKER_TEST_POSTGRES_ROLE is not configured")
+        conn = self.repository._connect()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT current_user, "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'SELECT'), "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'INSERT'), "
+                    "has_table_privilege(current_user, 'remote_audit.events', 'DELETE'), "
+                    "has_table_privilege(current_user, 'remote_audit.heads', 'UPDATE')"
+                )
+                role, can_select, can_insert, can_delete, can_update_head = cursor.fetchone()
+                self.assertEqual(role, "remote_audit_app")
+                self.assertTrue(can_select)
+                self.assertTrue(can_insert)
+                self.assertFalse(can_delete)
+                self.assertTrue(can_update_head)
+                cursor.execute(
+                    "SELECT bool_and(c.relrowsecurity) FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = 'remote_audit' AND c.relkind = 'r'"
+                )
+                self.assertTrue(cursor.fetchone()[0])
+        finally:
+            conn.rollback()
+            conn.close()
 
     def test_idempotency_integrity_and_cross_connection_reads(self):
         token = hashlib.sha256(b"one-plan").hexdigest()
