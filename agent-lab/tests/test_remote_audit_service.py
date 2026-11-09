@@ -274,7 +274,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
             repository=self.repository,
             authorization_policy=MalformedPolicy(),
         )
-        status, payload = service.handle(
+        status, headers, payload = service.handle(
             "GET", "/v1/audit/events",
             {"Authorization": f"Bearer {self.creator}"}, b"",
         )
