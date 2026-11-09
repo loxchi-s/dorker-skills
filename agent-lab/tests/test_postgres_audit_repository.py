@@ -50,7 +50,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             approval_token=token,
         )
 
-    def test_role_is_rls_scoped_and_cannot_delete(self):
+    def test_role_membership_inherits_least_privilege_and_rls(self):
         if not self.test_role:
             self.skipTest("DORKER_TEST_POSTGRES_ROLE is not configured")
         conn = self.repository._connect()
@@ -58,13 +58,15 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             with conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT current_user, "
+                    "pg_has_role(current_user, 'remote_audit_app', 'MEMBER') AS is_member, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'SELECT') AS can_select, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'INSERT') AS can_insert, "
                     "has_table_privilege(current_user, 'remote_audit.events', 'DELETE') AS can_delete, "
                     "has_table_privilege(current_user, 'remote_audit.heads', 'UPDATE') AS can_update_head"
                 )
                 privileges = cursor.fetchone()
-                self.assertEqual(privileges["current_user"], "remote_audit_app")
+                self.assertEqual(privileges["current_user"], "remote_audit_login")
+                self.assertTrue(privileges["is_member"])
                 self.assertTrue(privileges["can_select"])
                 self.assertTrue(privileges["can_insert"])
                 self.assertFalse(privileges["can_delete"])
