@@ -242,6 +242,13 @@ class RemoteAuditServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 403)
         self.assertEqual(json.loads(payload)["error"]["code"], "forbidden")
+        plan_status, plan_headers, plan_payload = service.handle(
+            "POST", "/v1/audit/plans",
+            {"Authorization": f"Bearer {self.creator}"},
+            json.dumps({"idempotency_key": "denied-plan", "plan": self.make_plan()}).encode(),
+        )
+        self.assertEqual(plan_status, 403)
+        self.assertEqual(json.loads(plan_payload)["error"]["code"], "forbidden")
         self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
 
     def test_authorization_policy_exception_fails_closed(self):
