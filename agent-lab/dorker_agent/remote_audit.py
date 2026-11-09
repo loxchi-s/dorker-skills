@@ -4,6 +4,8 @@ This client does not verify OIDC claims or make local persistence authoritative.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import random
 import re
@@ -256,7 +258,6 @@ class RemoteAuditHttpClient:
             ).encode("utf-8")
         except (TypeError, ValueError) as exc:
             raise AuditClientError("audit event is not canonically serializable") from exc
-        import hashlib
         return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
@@ -289,7 +290,7 @@ class RemoteAuditHttpClient:
             if event["previous_hash"] != previous:
                 raise AuditClientError("audit event previous_hash does not match chain")
             calculated_hash = RemoteAuditHttpClient.compute_event_hash(event)
-            if not __import__("hmac").compare_digest(calculated_hash, event["event_hash"]):
+            if not hmac.compare_digest(calculated_hash, event["event_hash"]):
                 raise AuditClientError("audit event hash does not match canonical payload")
             previous = event["event_hash"]
             expected_sequence += 1
