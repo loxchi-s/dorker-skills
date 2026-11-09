@@ -11,6 +11,7 @@ import json
 import re
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -35,6 +36,34 @@ class AuditServiceError(RuntimeError):
 
 class IdentityVerifier(Protocol):
     def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor: ...
+
+
+@dataclass(frozen=True)
+class AuthorizationResult:
+    allowed: bool
+    decision_id: str
+    policy_version: str
+
+
+class AuthorizationPolicy(Protocol):
+    def authorize(
+        self, *, actor: VerifiedGitHubActor, operation: str,
+        repository_id: int, plan_token: str | None,
+    ) -> AuthorizationResult: ...
+
+
+class DefaultDenyAuthorizationPolicy:
+    """Safe default until an explicitly reviewed policy is configured."""
+
+    def authorize(
+        self, *, actor: VerifiedGitHubActor, operation: str,
+        repository_id: int, plan_token: str | None,
+    ) -> AuthorizationResult:
+        return AuthorizationResult(
+            allowed=False,
+            decision_id="policy-unconfigured",
+            policy_version="default-deny-v1",
+        )
 
 
 class AuditRepository(Protocol):
@@ -267,6 +296,7 @@ class RemoteAuditService:
     def __init__(
         self, *, repository_id: int, identity_verifier: IdentityVerifier,
         repository: AuditRepository,
+        authorization_policy: AuthorizationPolicy | None = None,
     ) -> None:
         if isinstance(repository_id, bool) or not isinstance(repository_id, int) or repository_id < 1:
             raise ValueError("repository_id must be a positive integer")
@@ -276,8 +306,11 @@ class RemoteAuditService:
             if not callable(getattr(repository, method, None)):
                 raise TypeError(f"repository must expose {method}()")
         self._repository_id = repository_id
+        if authorization_policy is not None and not callable(getattr(authorization_policy, "authorize", None)):
+            raise TypeError("authorization_policy must expose authorize()")
         self._identity_verifier = identity_verifier
         self._repository = repository
+        self._authorization_policy = authorization_policy or DefaultDenyAuthorizationPolicy()
 
     def handle(
         self, method: str, target: str, headers: dict[str, str] | None = None,
@@ -303,7 +336,8 @@ class RemoteAuditService:
                 raise AuditServiceError(400, "invalid_request", "URL fragment is not allowed")
             path = parsed.path
             if method == "GET" and path == "/v1/audit/health":
-                self._authenticate(headers)
+                actor = self._authenticate(headers)
+                self._authorize(actor, "read_audit")
                 ready = self._repository.verify(self._repository_id)
                 return self._json(200, {
                     "ready": ready, "mode": "in-memory-test-only",
@@ -322,6 +356,7 @@ class RemoteAuditService:
                     "payload": {"idempotency_key": key, "plan": plan},
                 }
                 request_hash = _canonical_hash(operation)
+                self._authorize(actor, "create_plan", token)
                 event, replayed = self._repository.append(
                     repository_id=self._repository_id, idempotency_key=key,
                     request_hash=request_hash, event_type="gc_plan_created",
@@ -344,6 +379,7 @@ class RemoteAuditService:
                     "payload": {"idempotency_key": key, "approval_token": token, "decision": decision},
                 }
                 request_hash = _canonical_hash(operation)
+                self._authorize(actor, decision, token)
                 event, replayed = self._repository.append(
                     repository_id=self._repository_id, idempotency_key=key,
                     request_hash=request_hash,
@@ -353,12 +389,14 @@ class RemoteAuditService:
                 )
                 return self._json(200, self._success(event, key, replayed, request_id))
             if method == "GET" and path.startswith("/v1/audit/idempotency/"):
+                self._authorize(actor, "lookup_idempotency")
                 key = self._validate_key(unquote(path.rsplit("/", 1)[-1]))
                 event = self._repository.lookup(self._repository_id, key)
                 if event is None:
                     raise AuditServiceError(404, "not_found", "idempotency key was not found")
                 return self._json(200, self._success(event, key, True, request_id))
             if method == "GET" and path == "/v1/audit/events":
+                self._authorize(actor, "read_audit")
                 if len(parsed.query) > 2048:
                     raise AuditServiceError(400, "invalid_request", "event query is oversized")
                 query = parse_qs(parsed.query, strict_parsing=True, max_num_fields=2)
@@ -394,6 +432,34 @@ class RemoteAuditService:
         if not isinstance(actor, VerifiedGitHubActor):
             raise AuditServiceError(401, "unauthenticated", "identity verifier returned invalid actor")
         return actor
+
+    def _authorize(
+        self, actor: VerifiedGitHubActor, operation: str,
+        plan_token: str | None = None,
+    ) -> AuthorizationResult:
+        try:
+            result = self._authorization_policy.authorize(
+                actor=actor, operation=operation,
+                repository_id=self._repository_id, plan_token=plan_token,
+            )
+        except Exception as exc:
+            raise AuditServiceError(
+                503, "authorization_unavailable",
+                "authorization policy could not be evaluated", retryable=True,
+            ) from exc
+        if (
+            not isinstance(result, AuthorizationResult)
+            or type(result.allowed) is not bool
+            or not isinstance(result.decision_id, str) or not result.decision_id
+            or not isinstance(result.policy_version, str) or not result.policy_version
+        ):
+            raise AuditServiceError(
+                503, "authorization_unavailable",
+                "authorization policy returned an invalid result", retryable=True,
+            )
+        if not result.allowed:
+            raise AuditServiceError(403, "forbidden", "operation is not authorized")
+        return result
 
     @staticmethod
     def _validate_key(value: object) -> str:
