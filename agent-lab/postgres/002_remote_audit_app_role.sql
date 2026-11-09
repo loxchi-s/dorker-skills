@@ -12,7 +12,28 @@ BEGIN
 END
 $$;
 
-ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
+-- Supabase's hosted postgres role cannot ALTER ROLE ... NOSUPERUSER.
+-- CREATE ROLE above supplies the restricted attributes for a new role. For an
+-- existing role, validate its attributes and fail closed rather than mutating it.
+DO $role_guard$
+DECLARE
+  app_role record;
+BEGIN
+  SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+         rolreplication, rolbypassrls, rolinherit
+    INTO app_role
+  FROM pg_roles
+  WHERE rolname = 'remote_audit_app';
+
+  IF NOT FOUND OR app_role.rolcanlogin OR app_role.rolsuper
+     OR app_role.rolcreatedb OR app_role.rolcreaterole
+     OR app_role.rolreplication OR app_role.rolbypassrls
+     OR app_role.rolinherit THEN
+    RAISE EXCEPTION
+      'remote_audit_app must already have restricted NOLOGIN/NOSUPERUSER/NOCREATEDB/NOCREATEROLE/NOREPLICATION/NOBYPASSRLS/NOINHERIT attributes';
+  END IF;
+END
+$role_guard$;
 
 -- Fail closed if a pre-existing role has unsafe memberships or object ownership.
 -- Do not silently mutate existing grants/ownership during a privilege migration.
