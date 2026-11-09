@@ -2,7 +2,7 @@
 
 ## Status
 
-**PostgreSQL adapter implemented and CI-tested; schema, RLS, privilege role, indexes, and restricted LOGIN role deployed to Supabase. Runtime password and live DSN connection are not configured.**
+**PostgreSQL adapter implemented and CI-tested; schema, RLS, privilege role, indexes, and restricted LOGIN role deployed to Supabase. The live DSN is not yet configured in GitHub Actions and direct-login authentication remains unvalidated.**
 
 - Supabase project: `dorker-skills-audit` (Singapore)
 - Project ref: `ldqrztnihfguapsbwxpg`
@@ -12,7 +12,7 @@
 - Rows: zero at initial verification
 - Policies: 11 role-scoped policies for `remote_audit_app`; no policies for `anon` or `authenticated`
 - `remote_audit_app`: NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, NOINHERIT
-- `remote_audit_login`: LOGIN, INHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS; only membership is `remote_audit_app`; no password has been assigned
+- `remote_audit_login`: LOGIN, INHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS; only membership is `remote_audit_app`. The current metadata query reports a non-NULL password hash, but the credential's validity/availability is unknown; reset or confirm it through a secure credential workflow.
 - Table grants: SELECT/INSERT on append-only tables; SELECT/INSERT/UPDATE on `heads`
 - RLS enabled on all five tables; table owner remains `postgres`
 
@@ -24,7 +24,7 @@ The GitHub Actions workflow for the schema-contract commit completed successfull
 
 The schema is private and is not intended for direct browser access through PostgREST. The service-side adapter uses `remote_audit_login`, which inherits only the `remote_audit_app` privilege role. Its password is intentionally unset; provision it through a secure credential workflow before testing a live connection. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
 
-GitHub Actions secrets cannot be populated through this repository workflow. Add any eventual connection secret through GitHub repository Settings > Secrets and variables > Actions, after the adapter and its least-privilege database role have been reviewed. Do not paste credentials into chat.
+GitHub Actions secrets cannot be populated through this repository workflow. Add `SUPABASE_AUDIT_DSN` through GitHub repository Settings > Secrets and variables > Actions. A manual, read-only smoke workflow is available at `.github/workflows/supabase-audit-live-smoke.yml`; it checks direct-login identity, role flags, membership, least-privilege grants, RLS, and `PostgresAuditRepository.verify(0)`. It performs no writes. Do not paste credentials into chat.
 
 ## Transaction contract for the adapter
 
