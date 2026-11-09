@@ -218,10 +218,6 @@ class RemoteAuditHttpClient:
                 if attempt + 1 < self._max_attempts:
                     self._pause(attempt)
                     continue
-                if method == "POST":
-                    raise AuditOutcomeIndeterminate(
-                        "write outcome unresolved after retry budget; retry later with the same key"
-                    )
                 raise AuditServiceUnavailable("audit service unavailable after retry budget")
             raise AuditRequestRejected(response.status, str(code))
 
