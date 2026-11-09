@@ -2,7 +2,7 @@
 
 ## Status
 
-**Schema deployed to the user's Supabase Free project; PostgreSQL adapter is not implemented or integration-tested.**
+**Schema and least-privilege database role deployed to the user's Supabase Free project; the application Runtime adapter is not yet connected.**
 
 - Supabase project: `dorker-skills-audit` (Singapore)
 - Project ref: `ldqrztnihfguapsbwxpg`
@@ -10,10 +10,12 @@
 - Tables: `events`, `heads`, `plans`, `decisions`, `consumed_evidence`
 - RLS: enabled on all five tables
 - Rows: zero at initial verification
-- Policies: none; `anon` and `authenticated` have no access
-- Current database grants observed: only `postgres` has table privileges
+- Policies: 11 role-scoped policies for `remote_audit_app`; no policies for `anon` or `authenticated`
+- `remote_audit_app`: NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, NOINHERIT
+- Table grants: SELECT/INSERT on append-only tables; SELECT/INSERT/UPDATE on `heads`
+- RLS enabled on all five tables; table owner remains `postgres`
 
-The migration is recorded in Supabase as `remote_audit_schema_v1`; a separate migration enabled RLS. The Supabase security advisor currently reports five informational `rls_enabled_no_policy` findings. This is intentional until a dedicated backend database role and narrowly scoped policies are designed. Do not add permissive policies for `anon` or `authenticated`.
+Applied migrations: `remote_audit_schema_v1`, `enable_remote_audit_rls`, `remote_audit_app_role_v1`, and `remote_audit_fk_indexes_v1`. Supabase Security Advisor returned no lints after role/policy deployment. Performance Advisor's five missing-FK-index findings were addressed by migration 003; recheck the advisor after its next refresh. The `remote_audit_app` role is repository-wide trusted service access, not tenant isolation.
 
 The GitHub Actions workflow for the schema-contract commit completed successfully. That CI result validates repository checks only; it is not a PostgreSQL integration test.
 
@@ -53,5 +55,5 @@ The advisory lock is important for the first event as well as later writes: a ro
 - Add PostgreSQL integration tests for same-key replay/conflict, concurrent appends, competing decisions, evidence replay, transaction rollback, process restart, and lost response after commit.
 - Run the complete FI-01..FI-14 and CR-01..CR-07 suites against an isolated PostgreSQL database using two independent service processes/runners.
 - Add authenticated cursor signing, external integrity checkpoints, backup/restore, bounded request deadlines/rate limits, and production authorization/evidence configuration.
-- Create a dedicated backend database role and role-scoped RLS policies before any runtime connection is enabled.
+- Create a separate restricted LOGIN role and grant it membership in `remote_audit_app` only after reviewing the runtime secret-handling and connection lifecycle. Do not use `postgres` or `service_role` as the application login.
 - Do not connect the application to Supabase or write production audit events until adapter tests pass and deployment is explicitly approved.
