@@ -193,3 +193,8 @@ No provider selection, infrastructure provisioning, database creation, workflow 
 ## Adversarial security review
 
 See [REMOTE_AUDIT_SECURITY_REVIEW.md](REMOTE_AUDIT_SECURITY_REVIEW.md). The review identifies unresolved production blockers: per-actor authorization and independent approval evidence, authenticated pagination cursors, durable transactional storage, request rate/deadline controls, and explicit audit-reader authorization. The in-memory reference is not approved for production or privileged artifact-GC use.
+
+
+## Authorization and independent approval evidence
+
+See [Remote Audit Authorization and Approval Evidence Contract v1](REMOTE_AUDIT_AUTHORIZATION_CONTRACT.md). The reference service does not yet enforce this contract; current creator/approver separation is not a substitute for per-operation authorization or independent evidence. The production gate remains closed.
