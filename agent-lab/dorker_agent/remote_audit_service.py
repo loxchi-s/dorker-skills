@@ -437,6 +437,12 @@ class SQLiteAuditRepository:
                 CREATE INDEX IF NOT EXISTS idx_remote_audit_plan_token
                     ON remote_audit_events(repository_id, plan_token, sequence);
             """)
+            db.execute(
+                "INSERT OR IGNORE INTO remote_audit_heads(repository_id, sequence, event_hash) "
+                "SELECT e.repository_id, e.sequence, e.event_hash FROM remote_audit_events e "
+                "JOIN (SELECT repository_id, MAX(sequence) AS sequence FROM remote_audit_events GROUP BY repository_id) latest "
+                "ON latest.repository_id=e.repository_id AND latest.sequence=e.sequence"
+            )
         finally:
             db.close()
 
