@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-**Design only.** This contract defines the boundary between a GitHub Actions runner and a future remote audit service. It does not implement an HTTP client/server, choose a provider, provision infrastructure, grant OIDC permissions, or enable a workflow. The SQLite adapter remains the only implemented store.
+**Contract + client implementation.** This document defines the boundary between a GitHub Actions runner and a future remote audit service. PR #13 implements a provider-neutral HTTP client with mock-transport tests; no service/server or remote store is implemented. It does not choose a provider, provision infrastructure, grant OIDC permissions, or enable a workflow. The SQLite adapter remains the only implemented store.
 
 The service is the authority for audit state. A runner must never report success from a local cache or SQLite fallback.
 
@@ -55,7 +55,7 @@ Request body:
 
 ### GET /v1/audit/events
 
-Read-only, bounded pagination. The response includes exactly these event fields: `sequence`, `event_id`, `event_type`, `actor_id`, `actor_login`, `timestamp`, `details`, `idempotency_key`, `request_hash`, `previous_hash`, and `event_hash`. `timestamp` is UTC RFC 3339 with exactly millisecond precision (`YYYY-MM-DDTHH:MM:SS.sssZ)); `details` is a JSON object. Pagination uses an opaque cursor; clients must not infer missing events from page size.
+Read-only, bounded pagination. The response includes exactly these event fields: `sequence`, `event_id`, `event_type`, `actor_id`, `actor_login`, `timestamp`, `details`, `idempotency_key`, `request_hash`, `previous_hash`, and `event_hash`. `timestamp` is UTC RFC 3339 with exactly millisecond precision (`YYYY-MM-DDTHH:MM:SS.sssZ`); `details` is a JSON object. Pagination uses an opaque cursor; clients must not infer missing events from page size.
 
 ### Canonical event hashing v1
 
