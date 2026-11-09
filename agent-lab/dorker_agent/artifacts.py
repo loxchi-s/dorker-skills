@@ -13,7 +13,7 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from pathlib import Path
 
 from .container_sandbox import ArtifactManifest
@@ -51,6 +51,26 @@ class GitHubIdentityVerifier(Protocol):
 
     def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor:
         """Verify token signature/claims and return its canonical GitHub actor."""
+
+
+@runtime_checkable
+class AuditStore(Protocol):
+    """Provider-neutral contract for the current artifact-GC audit operations.
+
+    Implementations must commit each operation atomically and fail closed.
+    This v1 contract intentionally does not claim cross-run idempotency: a
+    future version must add caller-supplied idempotency keys before remote use.
+    """
+
+    def record_gc_plan(self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim) -> str: ...
+
+    def record_gc_approval(
+        self, approval_token: str, *, claim: GitHubActorClaim, approved: bool,
+    ) -> str: ...
+
+    def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]: ...
+
+    def verify_audit_log(self) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
