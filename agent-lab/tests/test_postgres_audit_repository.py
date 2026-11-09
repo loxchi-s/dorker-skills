@@ -244,6 +244,36 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
         self.assertEqual(self.repository.list_events(repository_id, 0, 10), [events[0]])
         self.assertTrue(self.repository.verify(repository_id))
 
+    def test_concurrent_idempotency_key_reuse_with_different_payload_conflicts(self):
+        repository_id = self.repository_id + 5
+        key = "parallel-conflicting-key"
+        token = hashlib.sha256((key + "-plan").encode()).hexdigest()
+
+        def write(index: int):
+            try:
+                return self.repository.append(
+                    repository_id=repository_id,
+                    idempotency_key=key,
+                    request_hash=hashlib.sha256(f"{key}-{index}".encode()).hexdigest(),
+                    event_type="gc_plan_created",
+                    actor=self.actor,
+                    details={"plan": {"approval_token": token, "variant": index}},
+                    approval_token=token,
+                )
+            except AuditServiceError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(write, range(8)))
+
+        committed = [item for item in results if isinstance(item, tuple)]
+        conflicts = [item for item in results if isinstance(item, AuditServiceError)]
+        self.assertEqual(len(committed), 1)
+        self.assertEqual(len(conflicts), 7)
+        self.assertTrue(all(item.code == "idempotency_conflict" for item in conflicts))
+        self.assertEqual(len(self.repository.list_events(repository_id, 0, 10)), 1)
+        self.assertTrue(self.repository.verify(repository_id))
+
     def test_hash_chain_detects_direct_payload_tampering(self):
         admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
         if not admin_dsn:
