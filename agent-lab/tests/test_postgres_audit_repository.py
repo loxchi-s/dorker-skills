@@ -129,6 +129,66 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
         self.assertEqual([event["sequence"] for event in events], list(range(1, 9)))
         self.assertTrue(self.repository.verify(repository_id))
 
+    def test_failed_late_write_rolls_back_event_and_head(self):
+        admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
+        if not admin_dsn:
+            self.skipTest("DORKER_TEST_POSTGRES_ADMIN_DSN is not configured")
+
+        import psycopg
+
+        repository_id = self.repository_id + 2
+        admin = psycopg.connect(admin_dsn)
+        try:
+            with admin.cursor() as cursor:
+                cursor.execute("""
+                    CREATE OR REPLACE FUNCTION remote_audit.test_reject_plan_insert()
+                    RETURNS trigger LANGUAGE plpgsql AS $
+                    BEGIN
+                        RAISE EXCEPTION 'forced rollback integration test'
+                            USING ERRCODE = 'P0001';
+                    END;
+                    $
+                """)
+                cursor.execute("""
+                    CREATE TRIGGER test_reject_plan_insert
+                    BEFORE INSERT ON remote_audit.plans
+                    FOR EACH ROW EXECUTE FUNCTION remote_audit.test_reject_plan_insert()
+                """)
+            admin.commit()
+
+            key = "rollback-late-write"
+            with self.assertRaises(AuditServiceError) as failure:
+                self.repository.append(
+                    repository_id=repository_id,
+                    idempotency_key=key,
+                    request_hash=hashlib.sha256(key.encode()).hexdigest(),
+                    event_type="gc_plan_created",
+                    actor=self.actor,
+                    details={"plan": {"fixture": key}},
+                    approval_token=hashlib.sha256(key.encode()).hexdigest(),
+                )
+            self.assertEqual(failure.exception.code, "repository_unavailable")
+
+            with admin.cursor() as cursor:
+                cursor.execute(
+                    "SELECT "
+                    "(SELECT COUNT(*) FROM remote_audit.events WHERE repository_id = %s), "
+                    "(SELECT COUNT(*) FROM remote_audit.heads WHERE repository_id = %s), "
+                    "(SELECT COUNT(*) FROM remote_audit.plans WHERE repository_id = %s)",
+                    (repository_id, repository_id, repository_id),
+                )
+                self.assertEqual(cursor.fetchone(), (0, 0, 0))
+        finally:
+            with admin.cursor() as cursor:
+                cursor.execute(
+                    "DROP TRIGGER IF EXISTS test_reject_plan_insert ON remote_audit.plans"
+                )
+                cursor.execute(
+                    "DROP FUNCTION IF EXISTS remote_audit.test_reject_plan_insert()"
+                )
+            admin.commit()
+            admin.close()
+
 
 if __name__ == "__main__":
     unittest.main()
