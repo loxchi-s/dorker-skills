@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 
 from dorker_agent.container_sandbox import ArtifactManifest
 from dorker_agent.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
+    ArtifactDeletionPlan,
     ArtifactRetentionPolicy,
     ContentAddressedArtifactStore,
     GitHubActorClaim,
@@ -311,6 +314,47 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
     def test_gc_dry_run_rejects_invalid_scan_limit(self):
         with self.assertRaises(ValueError):
             self.index.dry_run_gc(max_scan_objects=0)
+
+    def test_gc_audit_rejects_forged_candidate_metadata_and_token(self):
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        altered = replace(plan.candidates[0], size_bytes=plan.candidates[0].size_bytes + 1)
+        forged = replace(
+            plan, candidates=(altered,), total_bytes=plan.total_bytes + 1,
+        )
+        with self.assertRaisesRegex(ValueError, "approval token"):
+            self.index.record_gc_plan(forged, claim=github_claim(101, "creator"))
+        self.assertEqual(self.index.list_audit_events(), [])
+
+    def test_gc_approval_rejects_tampered_recorded_candidate_metadata(self):
+        blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
+        path = os.path.join(self.blobs._root, blob.sha256[:2], blob.sha256[2:])
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        plan = self.index.build_gc_plan(
+            ArtifactRetentionPolicy(min_age_seconds=1),
+            now_unix_ns=10_000_000_000,
+        )
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        with sqlite3.connect(self.db) as db:
+            row = db.execute(
+                "SELECT details_json FROM artifact_audit_log WHERE action='gc_plan_created'"
+            ).fetchone()
+            details = json.loads(row[0])
+            details["candidates"][0]["mtime_unix_ns"] += 1
+            db.execute(
+                "UPDATE artifact_audit_log SET details_json=? WHERE action='gc_plan_created'",
+                (json.dumps(details, sort_keys=True, separators=(",", ":")),),
+            )
+        with self.assertRaisesRegex(ValueError, "recorded GC plan metadata"):
+            self.index.record_gc_approval(
+                plan.approval_token, claim=github_claim(202, "approver"), approved=True,
+            )
+        self.assertEqual(len(self.index.list_audit_events()), 1)
 
     def test_gc_audit_records_plan_and_approval_with_valid_hash_chain(self):
         blob = self.blobs.put(b"old-orphan", name="old", media_type="x", source="test")
