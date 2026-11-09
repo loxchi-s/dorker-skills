@@ -234,7 +234,7 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
             database = os.path.join(directory, "audit.sqlite3")
             index = SQLiteArtifactIndex(database, blobs, identity_verifier=identity)
             claim = identity.acquire_claim()
-            plan = ArtifactDeletionPlan((), 0, 0, "a" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, SQLiteArtifactIndex._gc_plan_token(0, ()))
 
             index.record_gc_plan(plan, claim=claim)
 
@@ -359,7 +359,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
                 identity_verifier=identity,
             )
             forged = GitHubActorClaim(202, "attacker", token)
-            plan = ArtifactDeletionPlan((), 0, 0, "b" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, SQLiteArtifactIndex._gc_plan_token(0, ()))
             with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
                 index.record_gc_plan(plan, claim=forged)
             self.assertEqual(index.list_audit_events(), [])
@@ -380,7 +380,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
                 ContentAddressedArtifactStore(root),
                 identity_verifier=identity,
             )
-            plan = ArtifactDeletionPlan((), 0, 0, "c" * 64)
+            plan = ArtifactDeletionPlan((), 0, 0, SQLiteArtifactIndex._gc_plan_token(0, ()))
             creator_claim = identity.acquire_claim()
             index.record_gc_plan(plan, claim=creator_claim)
 
