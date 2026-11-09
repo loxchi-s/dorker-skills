@@ -14,7 +14,7 @@ For any future privileged audit action, require a separate trusted actor whose i
 
 Do not claim that CODEOWNERS provides an approval gate: ownership declarations alone do not enforce review. Do not change repository visibility, rulesets, or reviewer requirements as part of this design update.
 
-The current code has a durable single-host SQLite audit index, but no GitHub Actions adapter that persists and reloads that index across separate runs. Do not assume runner-local SQLite persists between workflow runs. Do not add `id-token: write` or deletion capability until cross-run persistence and audit design have been implemented and tested.
+The current code has a durable single-host SQLite audit index, but no GitHub Actions adapter or remote transactional store that persists and reloads audit state across separate runs. The proposed provider-neutral architecture, transaction contract, idempotency rules, external checkpoints, and recovery requirements are documented in [AUDIT_PERSISTENCE_ARCHITECTURE.md](AUDIT_PERSISTENCE_ARCHITECTURE.md). This is design only: no provider is selected or provisioned. Do not assume runner-local SQLite persists between workflow runs. Do not add `id-token: write` or deletion capability until cross-run persistence and audit design have been implemented and tested.
 
 ## Security boundary
 
@@ -59,7 +59,7 @@ The eventual `.github/workflows/artifact-gc-audit.yml` must satisfy all of the f
 - For plan creation, record a plan only. For approval/rejection, require the plan token and a different verified actor ID. Reject duplicate decisions and unknown plan tokens.
 - Do not implement blob deletion, shell execution, arbitrary commands, dynamic action selection, or user-controlled network access.
 - Use bounded timeout, concurrency group, minimal checkout, and sanitized logs. Never print JWTs, bootstrap request tokens, or authorization headers.
-- Fail closed if identity verification, policy loading, SQLite audit persistence, or audit-chain verification fails.
+- Fail closed if identity verification, policy loading, remote audit persistence, idempotency resolution, checkpoint verification, or audit-chain verification fails.
 
 ## Pre-enable checklist
 
@@ -68,7 +68,10 @@ The eventual `.github/workflows/artifact-gc-audit.yml` must satisfy all of the f
 - [ ] Test plan creation and a separate-actor decision using synthetic signed JWTs.
 - [ ] Verify no token or bootstrap credential is written to SQLite, artifacts, or logs.
 - [ ] Verify environment protection, ruleset enforcement, and independent-review policy against live GitHub settings.
-- [ ] Review action SHAs, dependency pins, runner trust, database persistence/backup, and audit export.
+- [ ] Select and approve a persistence provider; review workload identity, database constraints, backup/restore, external checkpoints, and audit export.
+- [ ] Prove cross-run read/append using separate runner invocations and run concurrent-writer/idempotency tests.
+- [ ] Define and validate RPO/RTO; complete an isolated restore drill before enabling privileged workflow.
+- [ ] Review action SHAs, dependency pins, runner trust, and database access policy.
 - [ ] Obtain explicit approval before adding `id-token: write` to any workflow.
 - [ ] Keep artifact deletion unavailable unless separately designed, reviewed, and explicitly authorized.
 
