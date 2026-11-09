@@ -86,3 +86,11 @@ The runner must receive only the minimum short-lived permission needed to call t
 ## Non-goals
 
 This design does not add artifact deletion, object-store mutation, privileged shell execution, dynamic workflow inputs, or a live OIDC workflow. It does not select or provision Supabase, AWS, Azure, GCP, or another provider.
+
+## Remote service contract and test gates
+
+The provider-neutral HTTP boundary, OIDC trust boundary, request/response envelopes, transaction/idempotency semantics, and failure matrix are specified in [REMOTE_AUDIT_SERVICE_CONTRACT.md](REMOTE_AUDIT_SERVICE_CONTRACT.md). That document is design-only: it does not implement a remote adapter or establish cross-run durability.
+
+Before remote use, implement the service/client against that contract and pass the full failure-injection (FI-01..FI-14) and cross-run (CR-01..CR-07) suite against a real transactional adapter using two independent runner invocations. A fake service can validate client behavior but is not evidence of remote durability. In particular, a lost response after commit must resolve to the original event by the same idempotency key; an unresolved outcome remains indeterminate and must never be reported as success.
+
+Current status remains unchanged: local SQLite idempotency is implemented and CI-tested; remote ambiguous-commit recovery, remote persistence, and cross-run integration remain unimplemented and unvalidated.
