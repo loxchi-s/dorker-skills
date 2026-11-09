@@ -236,12 +236,12 @@ class RemoteAuditServiceTests(unittest.TestCase):
             identity_verifier=TestIdentityVerifier(),
             repository=self.repository,
         )
-        status, error = service.handle(
+        status, headers, payload = service.handle(
             "GET", "/v1/audit/events",
             {"Authorization": f"Bearer {self.creator}"}, b"",
         )
         self.assertEqual(status, 403)
-        self.assertEqual(json.loads(error)["error"]["code"], "forbidden")
+        self.assertEqual(json.loads(payload)["error"]["code"], "forbidden")
         self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
 
     def test_authorization_policy_exception_fails_closed(self):
@@ -255,7 +255,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
             repository=self.repository,
             authorization_policy=BrokenPolicy(),
         )
-        status, payload = service.handle(
+        status, headers, payload = service.handle(
             "GET", "/v1/audit/events",
             {"Authorization": f"Bearer {self.creator}"}, b"",
         )
