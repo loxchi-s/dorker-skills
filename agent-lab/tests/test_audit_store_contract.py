@@ -120,5 +120,39 @@ class SQLiteAuditStoreContractTests(unittest.TestCase):
         self.assertTrue(self.store.verify_audit_log())
 
 
+    def test_same_key_same_request_returns_original_event_after_reopen(self) -> None:
+        plan = self.make_plan()
+        first = self.store.record_gc_plan(
+            plan, claim=claim(11, "creator"), idempotency_key="retry-plan-1",
+        )
+        reopened = self.make_store()
+        retried = reopened.record_gc_plan(
+            plan, claim=claim(11, "creator"), idempotency_key="retry-plan-1",
+        )
+        self.assertEqual(retried, first)
+        self.assertEqual(len(reopened.list_audit_events()), 1)
+        self.assertTrue(reopened.verify_audit_log())
+
+    def test_same_key_with_different_request_fails_closed(self) -> None:
+        plan = self.make_plan()
+        self.store.record_gc_plan(
+            plan, claim=claim(11, "creator"), idempotency_key="conflict-key",
+        )
+        with self.assertRaisesRegex(ValueError, "different request"):
+            self.store.record_gc_plan(
+                plan, claim=claim(12, "other"), idempotency_key="conflict-key",
+            )
+        self.assertEqual(len(self.store.list_audit_events()), 1)
+
+    def test_invalid_idempotency_key_is_rejected(self) -> None:
+        plan = self.make_plan()
+        for key in ("", "contains spaces", "x" * 129, "unsafe/segment"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.store.record_gc_plan(
+                    plan, claim=claim(11, "creator"), idempotency_key=key,
+                )
+        self.assertEqual(self.store.list_audit_events(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
