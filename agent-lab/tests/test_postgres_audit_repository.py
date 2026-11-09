@@ -280,6 +280,34 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             self.repository.lookup(repository_id, key)
         self.assertEqual(failure.exception.code, "integrity_violation")
 
+    def test_hash_chain_verification_detects_plan_index_tampering(self):
+        admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
+        if not admin_dsn:
+            self.skipTest("DORKER_TEST_POSTGRES_ADMIN_DSN is not configured")
+
+        import psycopg
+
+        repository_id = self.repository_id + 6
+        key = "tampered-plan-index"
+        token = hashlib.sha256((key + "-plan").encode()).hexdigest()
+        event, replayed = self.append_plan(key, token)
+        self.assertFalse(replayed)
+
+        with psycopg.connect(admin_dsn) as admin:
+            with admin.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE remote_audit.plans SET creator_actor_id = creator_actor_id + 1 "
+                    "WHERE repository_id = %s AND plan_token = %s",
+                    (repository_id, token),
+                )
+                # The index row is changed without touching the event hash.
+                self.assertEqual(cursor.rowcount, 1)
+
+        self.assertFalse(self.repository.verify(repository_id))
+        with self.assertRaises(AuditServiceError) as failure:
+            self.repository.lookup(repository_id, key)
+        self.assertEqual(failure.exception.code, "integrity_violation")
+
     def test_failed_late_write_rolls_back_event_and_head(self):
         admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
         if not admin_dsn:
