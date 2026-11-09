@@ -23,6 +23,13 @@ GRANT SELECT, INSERT ON remote_audit.plans TO remote_audit_app;
 GRANT SELECT, INSERT ON remote_audit.decisions TO remote_audit_app;
 GRANT SELECT, INSERT ON remote_audit.consumed_evidence TO remote_audit_app;
 
+-- RLS must be enabled explicitly; policies alone do not enforce row security.
+ALTER TABLE remote_audit.events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE remote_audit.heads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE remote_audit.plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE remote_audit.decisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE remote_audit.consumed_evidence ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS remote_audit_app_events_select ON remote_audit.events;
 CREATE POLICY remote_audit_app_events_select ON remote_audit.events
   FOR SELECT TO remote_audit_app USING (true);
