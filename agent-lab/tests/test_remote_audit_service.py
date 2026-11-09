@@ -208,7 +208,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
     def test_unauthenticated_request_and_oversized_body_rejected(self):
         status, error = self.request("GET", "/v1/audit/events")
         self.assertEqual(status, 401)
-        status, error = self.service.handle(
+        status, headers, payload = self.service.handle(
             "POST", "/v1/audit/plans", {}, b"x" * (64 * 1024 + 1),
         )
         self.assertEqual(status, 413)
