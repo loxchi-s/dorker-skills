@@ -2,7 +2,7 @@
 
 ## Review scope
 
-Review target: `agent-lab/dorker_agent/remote_audit_service.py`, its in-memory repository, OIDC verifier boundary, and service contract tests.
+Review target: `agent-lab/dorker_agent/remote_audit_service.py`, its in-memory and SQLite reference repositories, OIDC verifier boundary, and service contract tests.
 
 This is a code-level review of a test reference implementation. It is not a penetration test, deployment review, or approval for production use.
 
@@ -93,3 +93,8 @@ The reference service now requires an injected approval evidence verifier for te
 ## SQLite adapter update (2026-11-09)
 
 The in-memory-only limitation is partly mitigated by a new `SQLiteAuditRepository` reference adapter. It uses a file-backed database, `BEGIN IMMEDIATE`, and unique constraints to atomically persist events, idempotency, plans, terminal decisions, and consumed evidence. Reopen/replay and independent-connection concurrency tests are added. This is single-host persistence only and does not satisfy the remote/cross-run durability requirement. ASR-03 remains a production blocker until a managed transactional adapter, external integrity checkpoints, backup/restore, and independent-run conformance tests are completed. The module remains a test harness, not an approved service.
+
+
+### SQLite head and rollback controls (2026-11-09)
+
+The SQLite reference adapter now stores a chain-head row in the same transaction as each event and checks it on every repository verification. A missing head in a pre-head test database is backfilled from the latest event during schema initialization; this is a compatibility migration, not an external trust anchor. Tests verify that a modified head blocks reads and that a capacity failure does not consume approval evidence or append an event. The database file is created with owner-only permissions and existing files with broader permissions are rejected. These controls improve local integrity but do not detect whole-database rollback/replacement, provide backup/PITR, or establish cross-run remote durability. Production remains blocked.
