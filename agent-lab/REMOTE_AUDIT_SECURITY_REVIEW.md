@@ -72,3 +72,8 @@ These changes harden the test reference; they do not close the production blocke
 ## Gate decision
 
 **Not approved for production or privileged artifact-GC use.** Proceed only with a separately designed authorization/approval-evidence policy and a provider-neutral transactional repository contract. Provider selection and provisioning remain separate decisions requiring explicit approval.
+
+
+## Follow-up design contract
+
+Per-operation authorization, default-deny behavior, independent approval evidence, replay prevention, atomic evidence consumption, and required conformance tests are specified in [REMOTE_AUDIT_AUTHORIZATION_CONTRACT.md](REMOTE_AUDIT_AUTHORIZATION_CONTRACT.md). This is design only; ASR-01 and ASR-06 remain open until runtime enforcement and tests are implemented.
