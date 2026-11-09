@@ -58,7 +58,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                 cursor.execute(
                     "SELECT current_user, "
                     "(SELECT rolcanlogin AND rolinherit AND NOT rolsuper AND NOT rolcreatedb "
-                    "AND NOT rolcreaterole AND NOT rolbypassrls FROM pg_roles "
+                    "AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls FROM pg_roles "
                     "WHERE rolname = current_user) AS login_role_restricted, "
                     "NOT EXISTS (SELECT 1 FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
