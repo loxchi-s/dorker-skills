@@ -116,6 +116,54 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(conflict.exception.code, "idempotency_conflict")
 
+    def test_lost_commit_acknowledgement_replays_committed_event(self):
+        import psycopg
+
+        drop_acknowledgement = True
+
+        class CommitAcknowledgementLoss:
+            def __init__(self, connection):
+                self._connection = connection
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+            def commit(self):
+                nonlocal drop_acknowledgement
+                self._connection.commit()
+                if drop_acknowledgement:
+                    drop_acknowledgement = False
+                    raise psycopg.OperationalError("simulated lost commit acknowledgement")
+
+        def connect_with_one_lost_ack():
+            return CommitAcknowledgementLoss(self.repository._connect())
+
+        repository = PostgresAuditRepository(connect_with_one_lost_ack)
+        repository_id = self.repository_id + 3
+        key = "lost-commit-ack"
+        request_hash = hashlib.sha256(key.encode()).hexdigest()
+        token = hashlib.sha256((key + "-plan").encode()).hexdigest()
+        kwargs = {
+            "repository_id": repository_id,
+            "idempotency_key": key,
+            "request_hash": request_hash,
+            "event_type": "gc_plan_created",
+            "actor": self.actor,
+            "details": {"plan": {"fixture": key}},
+            "approval_token": token,
+        }
+
+        with self.assertRaises(AuditServiceError) as failure:
+            repository.append(**kwargs)
+        self.assertEqual(failure.exception.code, "repository_unavailable")
+        self.assertTrue(failure.exception.retryable)
+
+        event, replayed = repository.append(**kwargs)
+        self.assertTrue(replayed)
+        self.assertEqual(event["idempotency_key"], key)
+        self.assertTrue(repository.verify(repository_id))
+        self.assertEqual(repository.list_events(repository_id, 0, 10), [event])
+
     def test_concurrent_first_appends_are_serialized(self):
         repository_id = self.repository_id + 1
 
