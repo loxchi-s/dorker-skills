@@ -3,8 +3,13 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import psycopg
+
+# Running a script sets sys.path[0] to scripts/, not the agent-lab package root.
+AGENT_LAB_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(AGENT_LAB_ROOT))
 
 from dorker_agent.postgres_audit_repository import PostgresAuditRepository
 
