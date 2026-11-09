@@ -57,7 +57,7 @@ jobs:
           # A stale direct CREATE grant must be normalized back to USAGE-only.
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "GRANT CREATE ON SCHEMA remote_audit TO remote_audit_app;"
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
-          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DO \\$\\$ BEGIN IF has_schema_privilege('remote_audit_app', 'remote_audit', 'CREATE') THEN RAISE EXCEPTION 'stale CREATE grant was not revoked'; END IF; END \\$\\$;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF has_schema_privilege('remote_audit_app', 'remote_audit', 'CREATE') THEN RAISE EXCEPTION 'stale CREATE grant was not revoked'; END IF; END \$\$;"
           # A pre-existing permissive policy must make the migration fail closed.
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE POLICY unexpected_public_policy ON remote_audit.events FOR SELECT TO PUBLIC USING (true);"
           if PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql; then
