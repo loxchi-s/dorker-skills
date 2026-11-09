@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from validate_registry import UniqueKeyLoader, parse_skill, validate
+from validate_registry import parse_skill, validate
 
 
 class RegistryValidatorTests(unittest.TestCase):
@@ -67,14 +67,24 @@ class RegistryValidatorTests(unittest.TestCase):
             self._make_registry(root)
             self.assertEqual(validate(root), [])
 
-    def test_yaml_json_parity_rejects_missing_or_changed_entry(self):
+    def test_yaml_json_parity_rejects_missing_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._make_registry(root)
             catalog = yaml.safe_load((root / "catalog.yaml").read_text(encoding="utf-8"))
-            catalog["skills"][0]["category"] = "advanced"
+            catalog["skills"].clear()
             (root / "catalog.yaml").write_text(yaml.safe_dump(catalog), encoding="utf-8")
             self.assertTrue(any("does not match" in e for e in validate(root)))
+
+    def test_yaml_json_parity_rejects_changed_metadata(self):
+        for field, value in (("category", "advanced"), ("status", "active"), ("path", "skills/other/SKILL.md")):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self._make_registry(root)
+                catalog = yaml.safe_load((root / "catalog.yaml").read_text(encoding="utf-8"))
+                catalog["skills"][0][field] = value
+                (root / "catalog.yaml").write_text(yaml.safe_dump(catalog), encoding="utf-8")
+                self.assertTrue(any("does not match" in e for e in validate(root)))
 
     def test_yaml_json_parity_rejects_extra_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
