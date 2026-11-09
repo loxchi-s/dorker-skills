@@ -79,30 +79,35 @@ class PostgresAuditRepository:
         cursor.execute("SELECT set_config('statement_timeout', %s, true)", (str(self._statement_timeout_ms),))
 
     def _verify_cursor(self, cursor, repository_id: int) -> bool:
-        cursor.execute(
-            "SELECT sequence, event_document, event_hash FROM remote_audit.events "
-            "WHERE repository_id = %s ORDER BY sequence",
-            (repository_id,),
-        )
         previous = _ZERO_HASH
         count = 0
         try:
-            # Stream rows rather than materializing the complete chain in memory.
-            for expected, row in enumerate(cursor, start=1):
-                if expected > self._max_events:
-                    return False
-                event = self._json_object(row["event_document"])
-                stored_hash = str(row["event_hash"]).strip()
-                if (
-                    int(row["sequence"]) != expected
-                    or event.get("sequence") != expected
-                    or event.get("previous_hash") != previous
-                    or event.get("event_hash") != stored_hash
-                    or stored_hash != _event_hash(event)
-                ):
-                    return False
-                previous = stored_hash
-                count = expected
+            # Keyset pagination bounds client-side buffering to 256 event rows.
+            while True:
+                cursor.execute(
+                    "SELECT sequence, event_document, event_hash FROM remote_audit.events "
+                    "WHERE repository_id = %s AND sequence > %s ORDER BY sequence LIMIT 256",
+                    (repository_id, count),
+                )
+                batch = cursor.fetchall()
+                if not batch:
+                    break
+                for row in batch:
+                    expected = count + 1
+                    if expected > self._max_events:
+                        return False
+                    event = self._json_object(row["event_document"])
+                    stored_hash = str(row["event_hash"]).strip()
+                    if (
+                        int(row["sequence"]) != expected
+                        or event.get("sequence") != expected
+                        or event.get("previous_hash") != previous
+                        or event.get("event_hash") != stored_hash
+                        or stored_hash != _event_hash(event)
+                    ):
+                        return False
+                    previous = stored_hash
+                    count = expected
 
             cursor.execute(
                 "SELECT sequence, event_hash FROM remote_audit.heads WHERE repository_id = %s",
