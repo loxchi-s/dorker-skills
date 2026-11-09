@@ -177,6 +177,8 @@ class InMemoryAuditRepository:
         approval_token: str | None,
     ) -> tuple[dict[str, object], bool]:
         with self._lock:
+            if not self._verify_locked(repository_id):
+                raise AuditServiceError(422, "integrity_violation", "audit chain verification failed")
             key = (repository_id, idempotency_key)
             prior = self._idempotency.get(key)
             if prior is not None:
@@ -231,23 +233,30 @@ class InMemoryAuditRepository:
 
     def lookup(self, repository_id: int, idempotency_key: str) -> dict[str, object] | None:
         with self._lock:
+            if not self._verify_locked(repository_id):
+                raise AuditServiceError(422, "integrity_violation", "audit chain verification failed")
             value = self._idempotency.get((repository_id, idempotency_key))
             return copy.deepcopy(value["event"]) if value else None
 
     def list_events(self, repository_id: int, offset: int, limit: int) -> list[dict[str, object]]:
         with self._lock:
+            if not self._verify_locked(repository_id):
+                raise AuditServiceError(422, "integrity_violation", "audit chain verification failed")
             return copy.deepcopy(self._events.get(repository_id, [])[offset:offset + limit])
+
+    def _verify_locked(self, repository_id: int) -> bool:
+        previous = _ZERO_HASH
+        for expected, event in enumerate(self._events.get(repository_id, []), start=1):
+            if event.get("sequence") != expected or event.get("previous_hash") != previous:
+                return False
+            if event.get("event_hash") != _event_hash(event):
+                return False
+            previous = str(event["event_hash"])
+        return True
 
     def verify(self, repository_id: int) -> bool:
         with self._lock:
-            previous = _ZERO_HASH
-            for expected, event in enumerate(self._events.get(repository_id, []), start=1):
-                if event.get("sequence") != expected or event.get("previous_hash") != previous:
-                    return False
-                if event.get("event_hash") != _event_hash(event):
-                    return False
-                previous = str(event["event_hash"])
-            return True
+            return self._verify_locked(repository_id)
 
 
 class RemoteAuditService:
