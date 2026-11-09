@@ -178,7 +178,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             "request_hash": request_hash,
             "event_type": "gc_plan_created",
             "actor": self.actor,
-            "details": {"plan": {"fixture": key}},
+            "details": {"plan": {"approval_token": token, "fixture": key}},
             "approval_token": token,
         }
 
@@ -344,6 +344,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             admin.commit()
 
             key = "rollback-late-write"
+            token = hashlib.sha256(key.encode()).hexdigest()
             with self.assertRaises(AuditServiceError) as failure:
                 self.repository.append(
                     repository_id=repository_id,
@@ -352,7 +353,7 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
                     event_type="gc_plan_created",
                     actor=self.actor,
                     details={"plan": {"approval_token": token, "fixture": key}},
-                    approval_token=hashlib.sha256(key.encode()).hexdigest(),
+                    approval_token=token,
                 )
             self.assertEqual(failure.exception.code, "repository_unavailable")
 
