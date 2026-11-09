@@ -216,6 +216,70 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
         self.assertEqual([event["sequence"] for event in events], list(range(1, 9)))
         self.assertTrue(self.repository.verify(repository_id))
 
+    def test_concurrent_same_idempotency_key_returns_one_committed_event(self):
+        repository_id = self.repository_id + 4
+        key = "parallel-same-key"
+        token = hashlib.sha256((key + "-plan").encode()).hexdigest()
+        request_hash = hashlib.sha256((key + "-request").encode()).hexdigest()
+
+        def write(_index: int):
+            return self.repository.append(
+                repository_id=repository_id,
+                idempotency_key=key,
+                request_hash=request_hash,
+                event_type="gc_plan_created",
+                actor=self.actor,
+                details={"plan": {"fixture": key}},
+                approval_token=token,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(write, range(8)))
+
+        events = [event for event, _ in results]
+        replay_flags = [replayed for _, replayed in results]
+        self.assertEqual(sum(not replayed for replayed in replay_flags), 1)
+        self.assertEqual(sum(replayed for replayed in replay_flags), 7)
+        self.assertTrue(all(event == events[0] for event in events))
+        self.assertEqual(self.repository.list_events(repository_id, 0, 10), [events[0]])
+        self.assertTrue(self.repository.verify(repository_id))
+
+    def test_hash_chain_detects_direct_payload_tampering(self):
+        admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
+        if not admin_dsn:
+            self.skipTest("DORKER_TEST_POSTGRES_ADMIN_DSN is not configured")
+
+        import psycopg
+
+        repository_id = self.repository_id + 5
+        key = "tamper-detection"
+        token = hashlib.sha256((key + "-plan").encode()).hexdigest()
+        event, replayed = self.repository.append(
+            repository_id=repository_id,
+            idempotency_key=key,
+            request_hash=hashlib.sha256((key + "-request").encode()).hexdigest(),
+            event_type="gc_plan_created",
+            actor=self.actor,
+            details={"plan": {"fixture": key}},
+            approval_token=token,
+        )
+        self.assertFalse(replayed)
+
+        with psycopg.connect(admin_dsn) as admin:
+            with admin.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE remote_audit.events "
+                    "SET event_document = jsonb_set(event_document, "
+                    "'{details,plan,fixture}', %s::jsonb) "
+                    "WHERE repository_id = %s AND sequence = %s",
+                    ('"tampered"', repository_id, event["sequence"]),
+                )
+
+        self.assertFalse(self.repository.verify(repository_id))
+        with self.assertRaises(AuditServiceError) as failure:
+            self.repository.lookup(repository_id, key)
+        self.assertEqual(failure.exception.code, "integrity_violation")
+
     def test_failed_late_write_rolls_back_event_and_head(self):
         admin_dsn = os.environ.get("DORKER_TEST_POSTGRES_ADMIN_DSN")
         if not admin_dsn:
