@@ -412,7 +412,20 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         )
         index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-3")
         with self.assertRaisesRegex(RuntimeError, "capacity"):
-            index.record_gc_approval(plan.approval_token, claim=github_claim(202, "approver"), approved=False, idempotency_key="contract-artifact-2")
+            index.record_gc_approval(
+                plan.approval_token, claim=github_claim(202, "approver"),
+                approved=False, idempotency_key="capacity-retry-approval",
+            )
+        reopened = SQLiteArtifactIndex(
+            self.db, self.blobs, max_audit_records=2,
+            identity_verifier=FakeGitHubIdentityVerifier(),
+        )
+        reopened.record_gc_approval(
+            plan.approval_token, claim=github_claim(202, "approver"),
+            approved=False, idempotency_key="capacity-retry-approval",
+        )
+        self.assertEqual(len(reopened.list_audit_events()), 2)
+        self.assertTrue(reopened.verify_audit_log())
 
     def test_gc_audit_hash_chain_detects_database_tampering(self):
         blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
