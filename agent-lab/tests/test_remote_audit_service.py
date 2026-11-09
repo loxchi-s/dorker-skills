@@ -4,10 +4,15 @@ import base64
 import hashlib
 import json
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
 from dorker_agent.artifacts import VerifiedGitHubActor
+from dorker_agent.github_oidc import GitHubActionsOIDCVerifier, GitHubOIDCPolicy
 from dorker_agent.remote_audit import RemoteAuditHttpClient
 from dorker_agent.remote_audit_service import (
     InMemoryAuditRepository,
@@ -262,6 +267,115 @@ class RemoteAuditServiceTests(unittest.TestCase):
         payload = b"".join(self.service(environ, start_response))
         self.assertEqual(captured["status"], "200 OK")
         self.assertEqual(json.loads(payload)["sequence"], 1)
+
+
+
+class StaticJWKS:
+    def __init__(self, document):
+        self.document = document
+
+    def load(self):
+        return self.document
+
+
+class SignedOIDCServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.now = int(time.time())
+        self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public = self.private_key.public_key().public_numbers()
+        self.policy = GitHubOIDCPolicy(
+            audience="dorker-artifact-gc",
+            repository="loxchi-s/dorker-skills",
+            repository_id=1450173940,
+            allowed_workflow_refs=(
+                "loxchi-s/dorker-skills/.github/workflows/artifact-gc-audit.yml@refs/heads/main",
+            ),
+            allowed_subjects=("repo:loxchi-s/dorker-skills:environment:artifact-gc",),
+            clock_skew_seconds=0,
+            max_token_age_seconds=600,
+        )
+        self.verifier = GitHubActionsOIDCVerifier(
+            self.policy,
+            StaticJWKS({"keys": [{
+                "kty": "RSA", "kid": "service-test", "alg": "RS256", "use": "sig",
+                "n": b64url(public.n.to_bytes((public.n.bit_length() + 7) // 8, "big")),
+                "e": b64url(public.e.to_bytes((public.e.bit_length() + 7) // 8, "big")),
+            }]}),
+            clock=lambda: self.now,
+        )
+        self.repository = InMemoryAuditRepository()
+        self.service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=self.verifier,
+            repository=self.repository,
+        )
+
+    def signed_token(self, **overrides):
+        claims = {
+            "iss": "https://token.actions.githubusercontent.com",
+            "aud": "dorker-artifact-gc",
+            "exp": self.now + 300,
+            "iat": self.now,
+            "nbf": self.now,
+            "repository": "loxchi-s/dorker-skills",
+            "repository_id": "1450173940",
+            "workflow_ref": "loxchi-s/dorker-skills/.github/workflows/artifact-gc-audit.yml@refs/heads/main",
+            "sub": "repo:loxchi-s/dorker-skills:environment:artifact-gc",
+            "actor_id": "101",
+            "actor": "signed-creator",
+        }
+        claims.update(overrides)
+        header = b64url(b'{"alg":"RS256","kid":"service-test","typ":"JWT"}')
+        payload = b64url(json.dumps(claims, separators=(",", ":")).encode())
+        signing_input = f"{header}.{payload}".encode("ascii")
+        signature = self.private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        return f"{header}.{payload}.{b64url(signature)}"
+
+    def post_plan(self, token):
+        cutoff = 1_800_000_000_000_000_000
+        candidates = []
+        canonical = json.dumps(
+            {"cutoff_unix_ns": cutoff, "candidates": candidates},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+        plan = {
+            "approval_token": hashlib.sha256(canonical).hexdigest(),
+            "cutoff_unix_ns": cutoff, "total_bytes": 0, "candidates": candidates,
+        }
+        status, headers, payload = self.service.handle(
+            "POST", "/v1/audit/plans", {"Authorization": f"Bearer {token}"},
+            json.dumps({"idempotency_key": "signed-plan", "plan": plan}).encode(),
+        )
+        return status, json.loads(payload)
+
+    def test_service_verifies_real_rs256_signature_and_policy(self):
+        status, result = self.post_plan(self.signed_token())
+        self.assertEqual(status, 200)
+        self.assertEqual(result["sequence"], 1)
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10)[0]["actor_login"], "signed-creator")
+
+    def test_service_rejects_wrong_repository_workflow_and_subject(self):
+        for overrides in (
+            {"repository_id": "999"},
+            {"workflow_ref": "loxchi-s/dorker-skills/.github/workflows/agent-lab-ci.yml@refs/heads/main"},
+            {"sub": "repo:loxchi-s/dorker-skills:ref:refs/heads/main"},
+            {"aud": "wrong-audience"},
+        ):
+            status, result = self.post_plan(self.signed_token(**overrides))
+            self.assertEqual(status, 401)
+            self.assertEqual(result["error"]["code"], "unauthenticated")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
+    def test_service_rejects_modified_jwt_signature(self):
+        token = self.signed_token()
+        parts = token.split(".")
+        signature = bytearray(base64.urlsafe_b64decode(parts[2] + "=" * (-len(parts[2]) % 4)))
+        signature[0] ^= 0x01
+        parts[2] = b64url(bytes(signature))
+        status, result = self.post_plan(".".join(parts))
+        self.assertEqual(status, 401)
+        self.assertEqual(result["error"]["code"], "unauthenticated")
+        self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
 
 
 if __name__ == "__main__":
