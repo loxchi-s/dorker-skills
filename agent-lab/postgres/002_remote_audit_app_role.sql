@@ -40,9 +40,36 @@ BEGIN
     SELECT 1 FROM pg_class
     WHERE relnamespace = 'remote_audit'::regnamespace
       AND relowner = app_role_oid
+  ) OR EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE pronamespace = 'remote_audit'::regnamespace
+      AND proowner = app_role_oid
+  ) OR EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typnamespace = 'remote_audit'::regnamespace
+      AND typowner = app_role_oid
   ) THEN
     RAISE EXCEPTION
       'remote_audit_app must not own the audit schema or its objects';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'remote_audit'
+      AND (
+        policyname NOT IN (
+          'remote_audit_app_events_select', 'remote_audit_app_events_insert',
+          'remote_audit_app_heads_select', 'remote_audit_app_heads_insert',
+          'remote_audit_app_heads_update', 'remote_audit_app_plans_select',
+          'remote_audit_app_plans_insert', 'remote_audit_app_decisions_select',
+          'remote_audit_app_decisions_insert', 'remote_audit_app_evidence_select',
+          'remote_audit_app_evidence_insert'
+        )
+        OR roles <> ARRAY['remote_audit_app']::name[]
+      )
+  ) THEN
+    RAISE EXCEPTION
+      'unexpected remote_audit RLS policy exists; review it before applying app-role policies';
   END IF;
 END
 $audit_guard$;
