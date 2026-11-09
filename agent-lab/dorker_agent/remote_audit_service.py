@@ -345,10 +345,11 @@ class RemoteAuditService:
                     raise AuditServiceError(400, "invalid_request", "limit must be 1..1000")
                 cursor = query.get("cursor", [None])[0]
                 offset = self._decode_cursor(cursor)
-                events = self._repository.list_events(self._repository_id, offset, int(raw_limit) + 1)
+                page_limit = min(int(raw_limit), 10)
+                events = self._repository.list_events(self._repository_id, offset, page_limit + 1)
                 next_cursor = None
-                if len(events) > int(raw_limit):
-                    events = events[:int(raw_limit)]
+                if len(events) > page_limit:
+                    events = events[:page_limit]
                     next_cursor = self._encode_cursor(offset + len(events))
                 return self._json(200, {"events": events, "next_cursor": next_cursor})
             raise AuditServiceError(404, "not_found", "endpoint was not found")
@@ -405,9 +406,12 @@ class RemoteAuditService:
 
     @staticmethod
     def _json(status: int, value: dict[str, object]) -> tuple[int, dict[str, str], bytes]:
-        return status, {"Content-Type": "application/json", "Cache-Control": "no-store"}, json.dumps(
+        payload = json.dumps(
             value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False,
         ).encode("utf-8")
+        if len(payload) > 256 * 1024:
+            raise AuditServiceError(503, "unavailable", "response exceeds 256 KiB", retryable=True)
+        return status, {"Content-Type": "application/json", "Cache-Control": "no-store"}, payload
 
     @classmethod
     def _error(
