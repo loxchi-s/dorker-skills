@@ -66,10 +66,10 @@ The event hash therefore commits to the event identity, verified actor, timestam
 Conformance vector (canonical JSON bytes shown as a single line):
 
 ```json
-{"actor_id":123,"actor_login":"test-actor","details":{},"event_id":"evt-1","event_type":"gc_plan_created","idempotency_key":"key-1","previous_hash":"0000000000000000000000000000000000000000000000000000000000000000","request_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sequence":1,"timestamp":"2026-11-09T00:00:00Z"}
+{"actor_id":123,"actor_login":"test-actor","details":{},"event_id":"evt-1","event_type":"gc_plan_created","idempotency_key":"key-1","previous_hash":"0000000000000000000000000000000000000000000000000000000000000000","request_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sequence":1,"timestamp":"2026-11-09T00:00:00.000Z"}
 ```
 
-Expected SHA-256: `7e020e26219c117229a29ad3da9fd87ee0124a872a5eba3edcb85e5070b5529c`.
+Expected SHA-256: `17e28036da076b4525c94aae117e95987fa2fc5da820c7ee856e7300587ce1e1`.
 
 A partial history read MUST be verified against a trusted anchor containing both the first expected sequence and the previous event hash. A full-history read starts at sequence 1 with an all-zero previous hash. A checkpoint head hash, when supplied, MUST match the final verified event hash.
 
