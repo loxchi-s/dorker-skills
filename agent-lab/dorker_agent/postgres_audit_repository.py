@@ -115,12 +115,114 @@ class PostgresAuditRepository:
             )
             head = cursor.fetchone()
             if count == 0:
-                return head is None
-            return bool(
-                head is not None
-                and int(head["sequence"]) == count
-                and str(head["event_hash"]).strip() == previous
+                if head is not None:
+                    return False
+            elif (
+                head is None
+                or int(head["sequence"]) != count
+                or str(head["event_hash"]).strip() != previous
+            ):
+                return False
+
+            # The hash chain is authoritative, but denormalized columns and
+            # uniqueness indexes must also describe exactly the same events.
+            cursor.execute(
+                """
+                SELECT
+                  EXISTS (
+                    SELECT 1 FROM remote_audit.events e
+                    WHERE e.repository_id = %s AND (
+                      e.event_id::text IS DISTINCT FROM e.event_document ->> 'event_id'
+                      OR e.event_type IS DISTINCT FROM e.event_document ->> 'event_type'
+                      OR e.idempotency_key IS DISTINCT FROM e.event_document ->> 'idempotency_key'
+                      OR e.request_hash IS DISTINCT FROM e.event_document ->> 'request_hash'
+                      OR e.plan_token IS DISTINCT FROM CASE
+                        WHEN e.event_type = 'gc_plan_created'
+                          THEN e.event_document #>> '{details,plan,approval_token}'
+                        WHEN e.event_type IN ('gc_plan_approved', 'gc_plan_rejected')
+                          THEN e.event_document #>> '{details,approval_token}'
+                        ELSE NULL
+                      END
+                    )
+                  ) AS invalid_event_columns,
+                  EXISTS (
+                    SELECT 1 FROM remote_audit.plans p
+                    LEFT JOIN remote_audit.events e
+                      ON e.repository_id = p.repository_id
+                     AND e.sequence = p.event_sequence
+                    WHERE p.repository_id = %s AND (
+                      e.sequence IS NULL
+                      OR e.event_type <> 'gc_plan_created'
+                      OR e.plan_token IS DISTINCT FROM p.plan_token
+                      OR e.event_document ->> 'actor_id' IS DISTINCT FROM p.creator_actor_id::text
+                      OR e.event_document #>> '{details,plan,approval_token}' IS DISTINCT FROM p.plan_token
+                    )
+                  ) OR EXISTS (
+                    SELECT 1 FROM remote_audit.events e
+                    WHERE e.repository_id = %s AND e.event_type = 'gc_plan_created'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM remote_audit.plans p
+                        WHERE p.repository_id = e.repository_id
+                          AND p.event_sequence = e.sequence
+                          AND p.plan_token = e.plan_token
+                          AND p.creator_actor_id::text = e.event_document ->> 'actor_id'
+                      )
+                  ) AS invalid_plans,
+                  EXISTS (
+                    SELECT 1 FROM remote_audit.decisions d
+                    LEFT JOIN remote_audit.events e
+                      ON e.repository_id = d.repository_id
+                     AND e.sequence = d.event_sequence
+                    WHERE d.repository_id = %s AND (
+                      e.sequence IS NULL
+                      OR e.event_type NOT IN ('gc_plan_approved', 'gc_plan_rejected')
+                      OR e.plan_token IS DISTINCT FROM d.plan_token
+                      OR e.event_document #>> '{details,approval_token}' IS DISTINCT FROM d.plan_token
+                    )
+                  ) OR EXISTS (
+                    SELECT 1 FROM remote_audit.events e
+                    WHERE e.repository_id = %s
+                      AND e.event_type IN ('gc_plan_approved', 'gc_plan_rejected')
+                      AND NOT EXISTS (
+                        SELECT 1 FROM remote_audit.decisions d
+                        WHERE d.repository_id = e.repository_id
+                          AND d.event_sequence = e.sequence
+                          AND d.plan_token = e.plan_token
+                      )
+                  ) AS invalid_decisions,
+                  EXISTS (
+                    SELECT 1 FROM remote_audit.consumed_evidence c
+                    LEFT JOIN remote_audit.events e
+                      ON e.repository_id = c.repository_id
+                     AND e.sequence = c.event_sequence
+                    WHERE c.repository_id = %s AND (
+                      e.sequence IS NULL
+                      OR e.event_type NOT IN ('gc_plan_approved', 'gc_plan_rejected')
+                      OR e.plan_token IS DISTINCT FROM c.plan_token
+                      OR e.event_document #>> '{details,approval_evidence,issuer}' IS DISTINCT FROM c.issuer
+                      OR e.event_document #>> '{details,approval_evidence,evidence_id}' IS DISTINCT FROM c.evidence_id
+                      OR e.event_document #>> '{details,approval_evidence,evidence_digest}' IS DISTINCT FROM c.evidence_digest
+                    )
+                  ) OR EXISTS (
+                    SELECT 1 FROM remote_audit.events e
+                    WHERE e.repository_id = %s
+                      AND e.event_type IN ('gc_plan_approved', 'gc_plan_rejected')
+                      AND NOT EXISTS (
+                        SELECT 1 FROM remote_audit.consumed_evidence c
+                        WHERE c.repository_id = e.repository_id
+                          AND c.event_sequence = e.sequence
+                          AND c.plan_token = e.plan_token
+                          AND c.issuer = e.event_document #>> '{details,approval_evidence,issuer}'
+                          AND c.evidence_id = e.event_document #>> '{details,approval_evidence,evidence_id}'
+                          AND c.evidence_digest = e.event_document #>> '{details,approval_evidence,evidence_digest}'
+                      )
+                  ) AS invalid_evidence
+                """,
+                (repository_id, repository_id, repository_id, repository_id,
+                 repository_id, repository_id, repository_id),
             )
+            integrity = cursor.fetchone()
+            return not any(integrity.values())
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError, AuditServiceError):
             return False
 
