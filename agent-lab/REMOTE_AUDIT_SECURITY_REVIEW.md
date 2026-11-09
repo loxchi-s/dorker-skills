@@ -77,3 +77,9 @@ These changes harden the test reference; they do not close the production blocke
 ## Follow-up design contract
 
 Per-operation authorization, default-deny behavior, independent approval evidence, replay prevention, atomic evidence consumption, and required conformance tests are specified in [REMOTE_AUDIT_AUTHORIZATION_CONTRACT.md](REMOTE_AUDIT_AUTHORIZATION_CONTRACT.md). This is design only; ASR-01 and ASR-06 remain open until runtime enforcement and tests are implemented.
+
+## Runtime authorization enforcement update
+
+An injectable AuthorizationPolicy is now enforced at each protected route. The built-in DefaultDenyAuthorizationPolicy rejects all operations when no policy is configured. Exceptions and malformed policy results fail closed. Test-only allow behavior is injected explicitly by test fixtures.
+
+ASR-01 remains OPEN / PARTIALLY MITIGATED: no real actor grants are configured; independent approval evidence is not yet enforced; policy decision metadata is not yet persisted in the event chain. ASR-06 is partially mitigated at the route boundary because audit reads and idempotency lookup now require explicit operation grants, but no actual production grants or reader scope have been configured. Do not deploy or enable privileged artifact GC.
