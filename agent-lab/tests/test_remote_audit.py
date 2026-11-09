@@ -251,6 +251,21 @@ class RemoteAuditHttpClientTests(unittest.TestCase):
             expected_previous_hash=previous, expected_head_hash=event["event_hash"],
         ))
 
+    def test_rejects_invalid_calendar_timestamp(self):
+        event = {
+            "sequence": 1, "event_id": "evt-invalid",
+            "event_type": "gc_plan_created", "actor_id": 123,
+            "actor_login": "test-actor", "timestamp": "2026-99-99T00:00:00.000Z",
+            "details": {}, "idempotency_key": "key-invalid",
+            "request_hash": "a" * 64, "previous_hash": "0" * 64,
+            "event_hash": "b" * 64,
+        }
+        client, _ = self.make_client(
+            lambda *args: HttpResponse(200, json.dumps({"events": [event]}).encode())
+        )
+        with self.assertRaises(AuditClientError):
+            client.list_audit_events()
+
     def test_validates_pagination_bounds(self):
         client, _ = self.make_client(lambda *args: HttpResponse(200, b'{"events":[]}'))
         with self.assertRaises(ValueError):
