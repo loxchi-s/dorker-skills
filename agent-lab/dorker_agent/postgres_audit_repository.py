@@ -481,3 +481,41 @@ class PostgresAuditRepository:
         finally:
             if conn is not None:
                 self._close_quietly(conn)
+
+    def readiness(self, repository_id: int) -> bool:
+        """Bounded readiness probe; checks the persisted head against the latest event."""
+        conn = None
+        try:
+            conn = self._connect()
+            with conn.cursor() as cursor:
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                self._configure(cursor)
+                cursor.execute(
+                    "SELECT h.sequence AS head_sequence, h.event_hash AS head_hash, "
+                    "e.sequence AS event_sequence, e.event_hash AS event_hash "
+                    "FROM (SELECT %s::bigint AS repository_id) target "
+                    "LEFT JOIN remote_audit.heads h ON h.repository_id = target.repository_id "
+                    "LEFT JOIN LATERAL ("
+                    "  SELECT sequence, event_hash FROM remote_audit.events "
+                    "  WHERE repository_id = target.repository_id "
+                    "  ORDER BY sequence DESC LIMIT 1"
+                    ") e ON TRUE",
+                    (repository_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return False
+                head_sequence, event_sequence = row["head_sequence"], row["event_sequence"]
+                if head_sequence is None and event_sequence is None:
+                    return True
+                return (
+                    head_sequence is not None
+                    and event_sequence is not None
+                    and head_sequence == event_sequence
+                    and row["head_hash"] == row["event_hash"]
+                )
+        except Exception as exc:
+            raise self._translate_database_error(exc) from exc
+        finally:
+            if conn is not None:
+                self._close_quietly(conn)
