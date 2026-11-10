@@ -1,0 +1,83 @@
+name: Local AI Workbench
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: Review instruction (optional)
+        required: false
+        type: string
+        default: "Review this change for correctness, security, reliability, and missing tests."
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_call:
+    inputs:
+      prompt:
+        description: Review instruction
+        required: false
+        type: string
+        default: "Review this change for correctness, security, reliability, and missing tests."
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-ai-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit test local inference client
+        working-directory: workbench
+        run: python -m unittest -v
+
+      - name: Start resource-limited local Ollama
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name local-ollama --cpus=2 --memory=4g --pids-limit=256 -p 127.0.0.1:11434:11434 ollama/ollama:0.6.8
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:11434/api/tags >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:11434/api/tags >/dev/null
+          docker exec local-ollama ollama pull qwen2.5:1.5b
+
+      - name: Run local model review
+        env:
+          LOCAL_AI_PROMPT: ${{ inputs.prompt || 'Review this change for correctness, security, reliability, and missing tests.' }}
+          LOCAL_AI_MODEL: qwen2.5:1.5b
+          LOCAL_AI_REPORT: local-ai-report.md
+          OLLAMA_URL: http://127.0.0.1:11434
+        run: python workbench/local_ai.py
+
+      - name: Upload review report
+        if: always() && hashFiles('local-ai-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-ai-review-${{ github.run_id }}
+          path: local-ai-report.md
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop local model container
+        if: always()
+        run: docker rm -f local-ollama || true
