@@ -98,3 +98,22 @@ The in-memory-only limitation is partly mitigated by a new `SQLiteAuditRepositor
 ### SQLite head and rollback controls (2026-11-09)
 
 The SQLite reference adapter now stores a chain-head row in the same transaction as each event and checks it on every repository verification. A missing head in a pre-head test database is backfilled from the latest event during schema initialization; this is a compatibility migration, not an external trust anchor. Tests verify that a modified head blocks reads and that a capacity failure does not consume approval evidence or append an event. The database file is created with owner-only permissions and existing files with broader permissions are rejected. These controls improve local integrity but do not detect whole-database rollback/replacement, provide backup/PITR, or establish cross-run remote durability. Production remains blocked.
+
+## Resource and request-boundary update (2026-11-10)
+
+### ASR-04 — Rate limits, concurrency, request deadlines, and readiness
+
+The WSGI reference now applies bounded process-local token buckets (30 requests/minute globally, burst 5; 10 requests/minute per socket peer, burst 3), a single in-flight request slot, a 64 KiB body limit, an 8-second application deadline, and explicit 429/503/408/504 responses with retry guidance. The PostgreSQL adapter now uses a 2-second connect timeout, 3-second statement timeout, 1-second lock timeout, and 5-second idle-in-transaction timeout. The PostgreSQL readiness path checks the persisted head against the latest event using a bounded `LIMIT 1` query instead of re-hashing the full event history on every readiness probe.
+
+A single-process limiter is not safe to scale horizontally. The supplied Gunicorn profile pins one synchronous worker and one thread. Increasing worker/thread count requires a shared rate-limit store and multi-process tests. The hard process deadline is supplied by Gunicorn's 10-second worker timeout; WSGI cannot safely interrupt an arbitrary blocking call. A real reverse proxy must enforce client upload/header timeouts and an upstream deadline. Therefore ASR-04 is **implemented in the reference code and covered by tests, but deployment validation remains open**.
+
+### ASR-05 — WSGI transport boundary
+
+A Gunicorn deployment profile now bounds request-line length, header count, header-field size, worker time, and concurrency. The application rejects oversized/malformed content length and body streams. A deployment guide defines the required TLS-terminating reverse-proxy limits.
+
+No production WSGI server or reverse proxy has been deployed or exercised against this project. ASR-05 is **partially implemented; live server/proxy validation remains open**. Do not mark the service production-ready until the actual host/proxy combination passes framing, slow-upload, header-overflow, timeout, and disconnect tests.
+
+### Free-plan quota policy
+
+The deployment guide defines alert thresholds at 80% and stop/mitigation thresholds at 90% of Supabase Free quotas. Supabase Free has unlimited Data API requests; the application request limiter protects backend capacity, not a monthly API-request quota. Organization-wide egress/storage/MAU and service invocation quotas must be monitored in Supabase Usage; the database connection string cannot report all of those totals. No automatic audit-history deletion or schema change was introduced.
+
