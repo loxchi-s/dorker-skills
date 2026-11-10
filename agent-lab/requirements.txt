@@ -2,3 +2,4 @@
 cryptography>=44.0.0,<48.0.0
 psycopg[binary]>=3.2,<4.0
 PyYAML>=6.0.2,<7.0.0
+gunicorn>=23.0,<24.0
