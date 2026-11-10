@@ -88,7 +88,8 @@ def main() -> int:
             if failed:
                 raise RuntimeError("least-privilege checks failed: " + ", ".join(failed))
 
-            cur.execute("SET statement_timeout = '3s'; SET lock_timeout = '1s'")
+            cur.execute("SET statement_timeout = '3s'")
+            cur.execute("SET lock_timeout = '1s'")
             cur.execute("SELECT pg_database_size(current_database())")
             database_bytes = cur.fetchone()[0]
             database_write_ceiling = 450_000_000
@@ -103,6 +104,9 @@ def main() -> int:
     # Exercise the production adapter's read/verification path using the same
     # direct-login DSN. Repository 0 is a read-only empty-chain probe.
     repository = PostgresAuditRepository.from_dsn(dsn)
+    if not repository.readiness(0):
+        raise RuntimeError("bounded readiness check failed for the empty audit chain")
+    print("PASS bounded readiness(0)")
     if not repository.verify(0):
         raise RuntimeError("adapter verify(0) did not validate the empty chain")
     print("PASS adapter verify(0)")
