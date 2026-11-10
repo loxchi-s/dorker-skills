@@ -647,7 +647,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
 
         class SlowIdentityVerifier:
             def verify(inner_self, claim):
-                time.sleep(0.02)
+                time.sleep(0.03)
                 return TestIdentityVerifier().verify(claim)
 
         service = RemoteAuditService(
@@ -655,7 +655,7 @@ class RemoteAuditServiceTests(unittest.TestCase):
             identity_verifier=SlowIdentityVerifier(),
             repository=InMemoryAuditRepository(),
             authorization_policy=TestAllowAuthorizationPolicy(),
-            request_timeout_seconds=0.001,
+            request_timeout_seconds=0.01,
         )
         environ = {
             "REQUEST_METHOD": "GET",
