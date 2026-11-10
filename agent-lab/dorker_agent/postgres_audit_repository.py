@@ -32,7 +32,8 @@ class PostgresAuditRepository:
         connection_factory: Callable[[], object],
         *,
         max_events: int = _MAX_EVENTS,
-        statement_timeout_ms: int = 5_000,
+        statement_timeout_ms: int = 3_000,
+        max_database_bytes: int = 450_000_000,
     ) -> None:
         if not callable(connection_factory):
             raise TypeError("connection_factory must be callable")
@@ -40,14 +41,18 @@ class PostgresAuditRepository:
             raise ValueError("max_events must be a positive integer")
         if isinstance(statement_timeout_ms, bool) or not isinstance(statement_timeout_ms, int) or statement_timeout_ms < 1:
             raise ValueError("statement_timeout_ms must be a positive integer")
+        if isinstance(max_database_bytes, bool) or not isinstance(max_database_bytes, int) or max_database_bytes < 1:
+            raise ValueError("max_database_bytes must be a positive integer")
         self._connect = connection_factory
         self._max_events = max_events
         self._statement_timeout_ms = statement_timeout_ms
+        self._max_database_bytes = max_database_bytes
 
     @classmethod
     def from_dsn(
         cls, dsn: str, *, max_events: int = _MAX_EVENTS,
-        statement_timeout_ms: int = 5_000,
+        statement_timeout_ms: int = 3_000,
+        max_database_bytes: int = 450_000_000,
     ) -> "PostgresAuditRepository":
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("a PostgreSQL DSN is required")
@@ -61,11 +66,15 @@ class PostgresAuditRepository:
             return psycopg.connect(
                 dsn,
                 row_factory=dict_row,
-                connect_timeout=5,
+                connect_timeout=2,
                 application_name="dorker-remote-audit",
             )
 
-        return cls(connect, max_events=max_events, statement_timeout_ms=statement_timeout_ms)
+        return cls(
+            connect, max_events=max_events,
+            statement_timeout_ms=statement_timeout_ms,
+            max_database_bytes=max_database_bytes,
+        )
 
     @staticmethod
     def _json_object(value: object) -> dict[str, object]:
@@ -76,7 +85,12 @@ class PostgresAuditRepository:
         return value
 
     def _configure(self, cursor) -> None:
-        cursor.execute("SELECT set_config('statement_timeout', %s, true)", (str(self._statement_timeout_ms),))
+        cursor.execute(
+            "SELECT set_config('statement_timeout', %s, true), "
+            "set_config('lock_timeout', %s, true), "
+            "set_config('idle_in_transaction_session_timeout', %s, true)",
+            (str(self._statement_timeout_ms), "1000", "5000"),
+        )
 
     def _verify_cursor(self, cursor, repository_id: int) -> bool:
         previous = _ZERO_HASH
@@ -290,6 +304,15 @@ class PostgresAuditRepository:
                     conn.commit()
                     return event, True
 
+                cursor.execute("SELECT pg_database_size(current_database()) AS database_bytes")
+                database_bytes = int(cursor.fetchone()["database_bytes"])
+                if database_bytes >= self._max_database_bytes:
+                    raise AuditServiceError(
+                        503, "database_budget_reached",
+                        "database reached the configured 90% Free-plan operating ceiling",
+                        retryable=False,
+                    )
+
                 cursor.execute(
                     "SELECT COUNT(*) AS event_count FROM remote_audit.events WHERE repository_id = %s",
                     (repository_id,),
@@ -471,6 +494,44 @@ class PostgresAuditRepository:
                 cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                 self._configure(cursor)
                 return self._verify_cursor(cursor, repository_id)
+        except Exception as exc:
+            raise self._translate_database_error(exc) from exc
+        finally:
+            if conn is not None:
+                self._close_quietly(conn)
+
+    def readiness(self, repository_id: int) -> bool:
+        """Bounded readiness probe; checks the persisted head against the latest event."""
+        conn = None
+        try:
+            conn = self._connect()
+            with conn.cursor() as cursor:
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                self._configure(cursor)
+                cursor.execute(
+                    "SELECT h.sequence AS head_sequence, h.event_hash AS head_hash, "
+                    "e.sequence AS event_sequence, e.event_hash AS event_hash "
+                    "FROM (SELECT %s::bigint AS repository_id) target "
+                    "LEFT JOIN remote_audit.heads h ON h.repository_id = target.repository_id "
+                    "LEFT JOIN LATERAL ("
+                    "  SELECT sequence, event_hash FROM remote_audit.events "
+                    "  WHERE repository_id = target.repository_id "
+                    "  ORDER BY sequence DESC LIMIT 1"
+                    ") e ON TRUE",
+                    (repository_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return False
+                head_sequence, event_sequence = row["head_sequence"], row["event_sequence"]
+                if head_sequence is None and event_sequence is None:
+                    return True
+                return (
+                    head_sequence is not None
+                    and event_sequence is not None
+                    and head_sequence == event_sequence
+                    and row["head_hash"] == row["event_hash"]
+                )
         except Exception as exc:
             raise self._translate_database_error(exc) from exc
         finally:

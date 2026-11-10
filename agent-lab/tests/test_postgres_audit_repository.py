@@ -143,6 +143,41 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             conn.rollback()
             conn.close()
 
+    def test_bounded_readiness_matches_persisted_head(self):
+        readiness_repository_id = int.from_bytes(os.urandom(8), "big") % (2**63 - 1) + 1
+        self.assertTrue(self.repository.readiness(readiness_repository_id))
+        token = hashlib.sha256(b"readiness-plan").hexdigest()
+        self.append_plan("readiness-key", token, repository_id=readiness_repository_id)
+        self.assertTrue(self.repository.readiness(readiness_repository_id))
+        self.assertTrue(self.repository.verify(readiness_repository_id))
+
+    def test_database_budget_blocks_new_writes_but_allows_idempotent_replay(self):
+        repository_id = int.from_bytes(os.urandom(8), "big") % (2**63 - 1) + 1
+        key = "budget-replay"
+        token = hashlib.sha256(b"budget-replay-plan").hexdigest()
+        request_hash = hashlib.sha256(key.encode()).hexdigest()
+        self.append_plan(key, token, repository_id=repository_id)
+        limited = PostgresAuditRepository(self.repository._connect, max_database_bytes=1)
+
+        replay, was_replayed = limited.append(
+            repository_id=repository_id, idempotency_key=key,
+            request_hash=request_hash, event_type="gc_plan_created",
+            actor=self.actor, details={"plan": {"fixture": key}},
+            approval_token=token,
+        )
+        self.assertTrue(was_replayed)
+        self.assertEqual(replay["sequence"], 1)
+
+        with self.assertRaises(AuditServiceError) as blocked:
+            limited.append(
+                repository_id=repository_id, idempotency_key="budget-blocked",
+                request_hash=hashlib.sha256(b"budget-blocked").hexdigest(),
+                event_type="gc_plan_created", actor=self.actor,
+                details={"plan": {"fixture": "budget-blocked"}},
+                approval_token=hashlib.sha256(b"budget-blocked-plan").hexdigest(),
+            )
+        self.assertEqual(blocked.exception.code, "database_budget_reached")
+
     def test_idempotency_integrity_and_cross_connection_reads(self):
         token = hashlib.sha256(b"one-plan").hexdigest()
         first, replayed = self.append_plan("one-key", token)
