@@ -144,11 +144,12 @@ class PostgresAuditRepositoryIntegrationTests(unittest.TestCase):
             conn.close()
 
     def test_bounded_readiness_matches_persisted_head(self):
-        self.assertTrue(self.repository.readiness(self.repository_id))
+        readiness_repository_id = int.from_bytes(os.urandom(8), "big") % (2**63 - 1) + 1
+        self.assertTrue(self.repository.readiness(readiness_repository_id))
         token = hashlib.sha256(b"readiness-plan").hexdigest()
-        self.append_plan("readiness-key", token)
-        self.assertTrue(self.repository.readiness(self.repository_id))
-        self.assertTrue(self.repository.verify(self.repository_id))
+        self.append_plan("readiness-key", token, repository_id=readiness_repository_id)
+        self.assertTrue(self.repository.readiness(readiness_repository_id))
+        self.assertTrue(self.repository.verify(readiness_repository_id))
 
     def test_idempotency_integrity_and_cross_connection_reads(self):
         token = hashlib.sha256(b"one-plan").hexdigest()
