@@ -33,6 +33,7 @@ class PostgresAuditRepository:
         *,
         max_events: int = _MAX_EVENTS,
         statement_timeout_ms: int = 3_000,
+        max_database_bytes: int = 450_000_000,
     ) -> None:
         if not callable(connection_factory):
             raise TypeError("connection_factory must be callable")
@@ -40,9 +41,12 @@ class PostgresAuditRepository:
             raise ValueError("max_events must be a positive integer")
         if isinstance(statement_timeout_ms, bool) or not isinstance(statement_timeout_ms, int) or statement_timeout_ms < 1:
             raise ValueError("statement_timeout_ms must be a positive integer")
+        if isinstance(max_database_bytes, bool) or not isinstance(max_database_bytes, int) or max_database_bytes < 1:
+            raise ValueError("max_database_bytes must be a positive integer")
         self._connect = connection_factory
         self._max_events = max_events
         self._statement_timeout_ms = statement_timeout_ms
+        self._max_database_bytes = max_database_bytes
 
     @classmethod
     def from_dsn(
@@ -65,7 +69,11 @@ class PostgresAuditRepository:
                 application_name="dorker-remote-audit",
             )
 
-        return cls(connect, max_events=max_events, statement_timeout_ms=statement_timeout_ms)
+        return cls(
+            connect, max_events=max_events,
+            statement_timeout_ms=statement_timeout_ms,
+            max_database_bytes=max_database_bytes,
+        )
 
     @staticmethod
     def _json_object(value: object) -> dict[str, object]:
@@ -294,6 +302,15 @@ class PostgresAuditRepository:
                     event = self._json_object(prior["event_document"])
                     conn.commit()
                     return event, True
+
+                cursor.execute("SELECT pg_database_size(current_database()) AS database_bytes")
+                database_bytes = int(cursor.fetchone()["database_bytes"])
+                if database_bytes >= self._max_database_bytes:
+                    raise AuditServiceError(
+                        503, "database_budget_reached",
+                        "database reached the configured 90% Free-plan operating ceiling",
+                        retryable=False,
+                    )
 
                 cursor.execute(
                     "SELECT COUNT(*) AS event_count FROM remote_audit.events WHERE repository_id = %s",
