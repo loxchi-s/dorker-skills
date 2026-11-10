@@ -21,7 +21,7 @@ def main() -> int:
         return 2
 
     # Direct-login identity and least-privilege checks. No writes are performed.
-    with psycopg.connect(dsn, connect_timeout=8, application_name="dorker-audit-smoke") as conn:
+    with psycopg.connect(dsn, connect_timeout=2, application_name="dorker-audit-smoke") as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -87,6 +87,18 @@ def main() -> int:
                 print(f"{'PASS' if passed else 'FAIL'} {name}")
             if failed:
                 raise RuntimeError("least-privilege checks failed: " + ", ".join(failed))
+
+            cur.execute("SET statement_timeout = '3s'; SET lock_timeout = '1s'")
+            cur.execute("SELECT pg_database_size(current_database())")
+            database_bytes = cur.fetchone()[0]
+            database_write_ceiling = 450_000_000
+            database_budget_ok = database_bytes < database_write_ceiling
+            print(
+                f"{'PASS' if database_budget_ok else 'FAIL'} database size budget "
+                f"({database_bytes} bytes; ceiling {database_write_ceiling})"
+            )
+            if not database_budget_ok:
+                raise RuntimeError("database size reached the 90% Free-plan operating ceiling")
 
     # Exercise the production adapter's read/verification path using the same
     # direct-login DSN. Repository 0 is a read-only empty-chain probe.
