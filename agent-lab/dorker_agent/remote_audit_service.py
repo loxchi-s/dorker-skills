@@ -790,7 +790,8 @@ class RemoteAuditService:
             if method == "GET" and path == "/v1/audit/health":
                 actor = self._authenticate(headers)
                 self._authorize(actor, "read_audit")
-                ready = self._repository.verify(self._repository_id)
+                readiness = getattr(self._repository, "readiness", None)
+                ready = readiness(self._repository_id) if callable(readiness) else self._repository.verify(self._repository_id)
                 return self._json(200, {
                     "ready": ready, "mode": getattr(self._repository, "mode", "custom-test-only"),
                     "request_id": request_id,
