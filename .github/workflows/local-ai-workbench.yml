@@ -39,7 +39,9 @@ jobs:
           persist-credentials: false
 
       - name: Checkout public Workbench implementation
-        run: git clone --depth 1 https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
+        env:
+          WORKBENCH_REF: ${{ github.repository == 'loxchi-s/dorker-skills' && (github.event_name == 'pull_request' && github.head_ref || github.ref_name) || 'main' }}
+        run: git clone --depth 1 --branch="$WORKBENCH_REF" https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
 
       - name: Set up Python
         uses: actions/setup-python@v5
