@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-**Design only.** This contract defines the boundary between a GitHub Actions runner and a future remote audit service. It does not implement an HTTP client/server, choose a provider, provision infrastructure, grant OIDC permissions, or enable a workflow. The SQLite adapter remains the only implemented store.
+**Contract + client + in-memory and SQLite reference repositories.** PR #13 implements a provider-neutral HTTP client and a WSGI-compatible service reference. `InMemoryAuditRepository` remains the fast process-local test double. `SQLiteAuditRepository` adds a durable single-host file-backed adapter using SQLite `BEGIN IMMEDIATE`, uniqueness constraints for repository-scoped idempotency, one terminal decision per plan, and one-time evidence consumption. Tests cover database reopen, same-key replay/conflict, evidence replay after reopen, and concurrent terminal decisions through independent repository connections. This does not establish remote/cross-run durability, backup/restore, external checkpoints, production deployment, or production security. No provider is selected, infrastructure provisioned, OIDC permission granted, or workflow enabled.
 
-The service is the authority for audit state. A runner must never report success from a local cache or SQLite fallback.
+The service is the authority for production audit state. The local SQLite reference adapter is for single-host contract testing only; a runner must never report success from a local cache or SQLite fallback.
 
 ## Trust boundary
 
@@ -55,7 +55,23 @@ Request body:
 
 ### GET /v1/audit/events
 
-Read-only, bounded pagination. The response includes sequence, event ID, event type, verified actor ID/login, timestamp, canonical details, idempotency key, previous hash, and event hash. Pagination uses an opaque cursor; clients must not infer missing events from page size.
+Read-only, bounded pagination. The response includes exactly these event fields: `sequence`, `event_id`, `event_type`, `actor_id`, `actor_login`, `timestamp`, `details`, `idempotency_key`, `request_hash`, `previous_hash`, and `event_hash`. `timestamp` is UTC RFC 3339 with exactly millisecond precision (`YYYY-MM-DDTHH:MM:SS.sssZ`); `details` is a JSON object. Pagination uses an opaque cursor; clients must not infer missing events from page size.
+
+### Canonical event hashing v1
+
+Both service and client MUST compute `event_hash` as SHA-256 over UTF-8 bytes of the canonical JSON object containing every event field above except `event_hash`. The object contains exactly: `sequence`, `event_id`, `event_type`, `actor_id`, `actor_login`, `timestamp`, `details`, `idempotency_key`, `request_hash`, and `previous_hash`. Serialize with recursively sorted object keys, compact separators (`,` and `:`), ASCII escaping enabled, and non-finite numbers forbidden. Arrays preserve order. Strings are not Unicode-normalized; the exact timestamp string and all string values are hashed as received. Hash output is 64 lowercase hexadecimal characters. `event_hash` itself is excluded to avoid recursion. Unknown or missing event fields MUST be rejected.
+
+The event hash therefore commits to the event identity, verified actor, timestamp, operation details, idempotency request hash, and previous chain link. A client MUST recompute this hash for every event before accepting the chain; checking only `previous_hash` links is insufficient.
+
+Conformance vector (canonical JSON bytes shown as a single line):
+
+```json
+{"actor_id":123,"actor_login":"test-actor","details":{},"event_id":"evt-1","event_type":"gc_plan_created","idempotency_key":"key-1","previous_hash":"0000000000000000000000000000000000000000000000000000000000000000","request_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sequence":1,"timestamp":"2026-11-09T00:00:00.000Z"}
+```
+
+Expected SHA-256: `17e28036da076b4525c94aae117e95987fa2fc5da820c7ee856e7300587ce1e1`.
+
+A partial history read MUST be verified against a trusted anchor containing both the first expected sequence and the previous event hash. A full-history read starts at sequence 1 with an all-zero previous hash. A checkpoint head hash, when supplied, MUST match the final verified event hash.
 
 ### GET /v1/audit/idempotency/{key}
 
@@ -68,7 +84,7 @@ Returns readiness only when the authoritative database is reachable and the conf
 ## Idempotency and transaction rules
 
 1. Require an idempotency key on every write. Validate length and character set; never generate a replacement key during retry.
-2. Compute a canonical request hash over API version, operation, repository ID, verified actor ID, and normalized request payload. Exclude bearer credentials and volatile transport metadata.
+2. Compute a canonical request hash over API version, operation, repository ID, verified actor ID, and normalized request payload. The v1 encoding is UTF-8 JSON with recursively sorted keys, compact separators, ASCII escaping, and non-finite numbers forbidden. Exclude bearer credentials and volatile transport metadata.
 3. Enforce a unique database constraint on repository ID plus idempotency key. Store request hash and final response/event hash in the same transaction as the event.
 4. Same key + same request hash returns the original committed result, including original event hash and sequence. It must not append another event.
 5. Same key + different request hash returns `409 idempotency_conflict`; it must not mutate state.
@@ -137,6 +153,10 @@ The suite must run against a real transactional adapter before any remote-use cl
 | CR-06 | Runner B presents a different repository/workflow identity | Service rejects; no state mutation |
 | CR-07 | Paginate event history across runner instances | No gaps/duplicates; full chain verifies against trusted checkpoint |
 
+### In-memory reference implementation boundary
+
+`dorker_agent.remote_audit_service.RemoteAuditService` exposes a WSGI-compatible callable and a direct `handle()` test interface. `InMemoryAuditRepository` serializes mutations with a process-local lock and enforces same-key replay/conflict, one plan per token, creator/approver separation, and one terminal decision. The identity verifier is injected; production wiring must use `GitHubActionsOIDCVerifier` with a fixed `GitHubOIDCPolicy` and GitHub JWKS provider. Tests include both a fake verifier for deterministic service-state tests and end-to-end service-boundary tests using real RS256 signing/verification with a static test JWKS; no live GitHub JWKS request is made. The cursor encoding is a test-only offset and must be replaced by a server-authenticated opaque cursor for deployment. The reference caps pages at 10 events and response bodies at 256 KiB even when a client requests a larger page. This implementation is intentionally non-durable and must never be used as an authoritative audit service.
+
 ### Required test topology
 
 - Two independent GitHub-hosted runner invocations, with no shared filesystem, workspace, cache, or artifact dependency.
@@ -160,7 +180,7 @@ The suite must run against a real transactional adapter before any remote-use cl
 
 1. Freeze this contract and add schema/version compatibility tests.
 2. Implement a provider-neutral HTTP client with bounded I/O, strict response parsing, and explicit indeterminate-commit handling. Do not include credentials or provider SDK dependencies in the domain layer.
-3. Implement a service-side verifier and transactional repository only after provider approval.
+3. The in-memory service reference and repository double are implemented for contract tests only. Implement a service-side deployment adapter and durable transactional repository only after provider approval; the in-memory repository does not satisfy durability, cross-process concurrency, or cross-run gates.
 4. Run FI tests against the real adapter, then CR tests across two independent runner invocations.
 5. Complete checkpoint, backup/restore, retention, monitoring, RPO/RTO, and independent authorization review.
 6. Only then propose a workflow change. Any `id-token: write`, environment protection, service secret, or privileged operation requires separate explicit approval.
@@ -168,3 +188,13 @@ The suite must run against a real transactional adapter before any remote-use cl
 ## Non-goals
 
 No provider selection, infrastructure provisioning, database creation, workflow activation, OIDC permission change, artifact deletion, or production credential configuration.
+
+
+## Adversarial security review
+
+See [REMOTE_AUDIT_SECURITY_REVIEW.md](REMOTE_AUDIT_SECURITY_REVIEW.md). The review identifies unresolved production blockers: per-actor authorization and independent approval evidence, authenticated pagination cursors, durable transactional storage, request rate/deadline controls, and explicit audit-reader authorization. The in-memory reference is not approved for production or privileged artifact-GC use.
+
+
+## Authorization and independent approval evidence
+
+See [Remote Audit Authorization and Approval Evidence Contract v1](REMOTE_AUDIT_AUTHORIZATION_CONTRACT.md). The reference service does not yet enforce this contract; current creator/approver separation is not a substitute for per-operation authorization or independent evidence. The production gate remains closed.

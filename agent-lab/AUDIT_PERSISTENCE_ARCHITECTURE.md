@@ -2,7 +2,7 @@
 
 ## Status
 
-**Partially implemented; remote persistence remains proposed.** `AuditStore` now defines a provider-neutral Python protocol for the existing GC plan, decision, event-read, and chain-verification operations. `SQLiteArtifactIndex` structurally satisfies this v1 protocol and is covered by local conformance tests. It remains a durable single-host index: a GitHub-hosted runner is ephemeral, so a database file created by one run is not available to the next run. Workflow artifacts and Actions caches are not the authoritative audit database.
+**Partially implemented; remote persistence remains proposed.** `AuditStore` defines a provider-neutral Python protocol for the existing GC plan, decision, event-read, and chain-verification operations. `SQLiteArtifactIndex` structurally satisfies this v1 protocol and is covered by local conformance tests. A provider-neutral synchronous HTTP client now implements bounded HTTPS requests, strict bounded JSON parsing, stable idempotency-key retries, and explicit indeterminate outcomes after transport failures; its mock-transport tests validate client behavior only. The client also paginates bounded event reads, verifies sequence/ID/previous-hash continuity, recomputes each event hash using the v1 canonical JSON contract, and supports verification from a trusted sequence/hash anchor. A fixed cross-language hash test vector is specified in `REMOTE_AUDIT_SERVICE_CONTRACT.md`. It remains a durable single-host index: a GitHub-hosted runner is ephemeral, so a database file created by one run is not available to the next run. Workflow artifacts and Actions caches are not the authoritative audit database.
 
 No provider, credentials, database, workflow, or repository permission is configured by this document. The GC workflow remains disabled, CI remains read-only, and artifact deletion remains unavailable.
 
@@ -12,7 +12,7 @@ Use a **transactional remote audit store** behind a narrow `AuditStore` interfac
 
 Keep SQLite as a local development/test adapter only. Do not attempt to synchronize SQLite files between runners, and do not use GitHub Actions artifacts, caches, workflow logs, or repository commits as the authoritative mutable ledger.
 
-The local `AuditStore` protocol now requires caller-supplied idempotency keys. The SQLite adapter persists a unique key and canonical request hash in the same transaction as each event. A retry with the same key and same request returns the original event hash; reuse with changed request content fails closed. This is local SQLite behavior only: ambiguous network commit recovery and cross-run remote semantics still require a remote adapter and integration tests.
+The remote event contract now specifies canonical event hashing v1: SHA-256 over sorted-key compact ASCII JSON of the exact event fields, including `request_hash` and `previous_hash`; the client recomputes every hash and rejects payload tampering. The local `AuditStore` protocol now requires caller-supplied idempotency keys. The SQLite adapter persists a unique key and canonical request hash in the same transaction as each event. A retry with the same key and same request returns the original event hash; reuse with changed request content fails closed. This is local SQLite behavior only: ambiguous network commit recovery and cross-run remote semantics still require a remote adapter and integration tests.
 
 The provider and hosting account are deliberately undecided. Select one only after reviewing trust boundaries, supported federated identity, transaction guarantees, backup/restore, retention, and cost. This document does not authorize provisioning a service or incurring cost.
 
@@ -93,4 +93,18 @@ The provider-neutral HTTP boundary, OIDC trust boundary, request/response envelo
 
 Before remote use, implement the service/client against that contract and pass the full failure-injection (FI-01..FI-14) and cross-run (CR-01..CR-07) suite against a real transactional adapter using two independent runner invocations. A fake service can validate client behavior but is not evidence of remote durability. In particular, a lost response after commit must resolve to the original event by the same idempotency key; an unresolved outcome remains indeterminate and must never be reported as success.
 
-Current status remains unchanged: local SQLite idempotency is implemented and CI-tested; remote ambiguous-commit recovery, remote persistence, and cross-run integration remain unimplemented and unvalidated.
+Current status: local SQLite idempotency is implemented and CI-tested; the HTTP client is implemented with mock-transport tests but has not been tested against a live service; remote ambiguous-commit recovery, remote persistence, and cross-run integration remain unimplemented and unvalidated.
+
+
+## Remote Audit Service Reference Repositories
+
+PR #13 adds `dorker_agent.remote_audit_service.RemoteAuditService` and `InMemoryAuditRepository` as a contract-test harness. The service validates plan structure and recomputes approval tokens, derives actor claims from the bearer JWT and delegates signature/claim verification to an injected verifier, scopes idempotency by repository ID, serializes writes under a process-local lock, enforces distinct-actor approval and a single terminal decision, and emits v1 canonical event hashes. It exposes a WSGI callable and direct request handler for tests. The in-memory repository is non-durable, does not survive process restart, and does not establish cross-run correctness. Deterministic service-state tests use a fake verifier; separate service-boundary tests use the real RS256 verifier with a generated test key and static test JWKS. Neither test path contacts GitHub's live JWKS endpoint. Production deployment still requires a separately reviewed verifier policy, durable transactional adapter, authenticated opaque cursors, and the full FI/CR suite.
+
+### SQLite remote-service reference adapter (2026-11-09)
+
+PR #13 now includes `SQLiteAuditRepository` for the remote-service reference contract. It uses a file-backed SQLite database, WAL mode, bounded busy timeout, `BEGIN IMMEDIATE` for serialized writes, and database uniqueness constraints for (repository, idempotency key), (repository, plan token) terminal decisions, and (repository, issuer, evidence ID) consumption. The event, idempotency record, plan/decision state, and consumed-evidence row commit or roll back together. Reopening a second repository instance against the same file preserves the event chain and replay state; tests exercise this and concurrent writes from independent connections.
+
+This is durable only on the same host and storage volume. It is not the managed remote store selected by the architecture, and it does not provide cross-run availability across ephemeral GitHub runners, backup/PITR, external signed checkpoints, multi-region failover, or production hardening. Do not synchronize the SQLite file between runners or use it as the authoritative production ledger.
+
+
+The SQLite reference adapter also maintains an `remote_audit_heads` row in the same transaction as each event. Startup migration backfills a missing head from the latest stored event for pre-head test databases; every subsequent read/write verifies the complete event chain against that head. This detects a changed or truncated tail while the head remains intact, but does not detect replacement of both the database and its head with an older copy. External signed checkpoints remain required for rollback detection.
