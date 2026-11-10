@@ -115,5 +115,5 @@ No production WSGI server or reverse proxy has been deployed or exercised agains
 
 ### Free-plan quota policy
 
-The deployment guide defines alert thresholds at 80% and stop/mitigation thresholds at 90% of Supabase Free quotas. Supabase Free has unlimited Data API requests; the application request limiter protects backend capacity, not a monthly API-request quota. Organization-wide egress/storage/MAU and service invocation quotas must be monitored in Supabase Usage; the database connection string cannot report all of those totals. No automatic audit-history deletion or schema change was introduced.
+The deployment guide defines alert thresholds at 80% and stop/mitigation thresholds at 90% of Supabase Free quotas. The PostgreSQL adapter now blocks new non-replay audit writes when the database reaches 450,000,000 bytes; exact idempotent replays remain available. Supabase Free has unlimited Data API requests; the application request limiter protects backend capacity, not a monthly API-request quota. Organization-wide egress/storage/MAU and service invocation quotas must be monitored in Supabase Usage; the database connection string cannot report all of those totals. No automatic audit-history deletion or schema change was introduced.
 
