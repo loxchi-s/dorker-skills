@@ -5,6 +5,7 @@ SQLite durability is single-host only; neither adapter is a production deploymen
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict
 import copy
 import hashlib
 import json
@@ -13,7 +14,9 @@ import re
 import sqlite3
 import stat
 import threading
+import time
 import uuid
+from math import ceil
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -663,6 +666,69 @@ class SQLiteAuditRepository:
             db.close()
 
 
+class RequestRateLimiter:
+    """Bounded process-local token buckets for a single-worker WSGI deployment."""
+
+    def __init__(
+        self, *, global_rate_per_minute: float = 30, global_burst: int = 5,
+        per_client_rate_per_minute: float = 10, per_client_burst: int = 3,
+        max_clients: int = 2048, clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        values = (global_rate_per_minute, per_client_rate_per_minute)
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0 for v in values):
+            raise ValueError("request rates must be positive numbers")
+        bursts = (global_burst, per_client_burst, max_clients)
+        if any(isinstance(v, bool) or not isinstance(v, int) or v < 1 for v in bursts):
+            raise ValueError("burst and max_clients values must be positive integers")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        self._global_rate = float(global_rate_per_minute) / 60.0
+        self._global_capacity = float(global_burst)
+        self._global_tokens = float(global_burst)
+        self._global_updated = clock()
+        self._client_rate = float(per_client_rate_per_minute) / 60.0
+        self._client_capacity = float(per_client_burst)
+        self._max_clients = max_clients
+        self._clock = clock
+        self._clients: OrderedDict[str, tuple[float, float]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _refill(tokens: float, updated: float, now: float, rate: float, capacity: float) -> tuple[float, float]:
+        return min(capacity, tokens + max(0.0, now - updated) * rate), now
+
+    def allow(self, client_key: str) -> tuple[bool, int]:
+        if not isinstance(client_key, str) or not client_key or len(client_key) > 128:
+            client_key = "unknown"
+        now = self._clock()
+        with self._lock:
+            global_tokens, global_updated = self._refill(
+                self._global_tokens, self._global_updated, now,
+                self._global_rate, self._global_capacity,
+            )
+            client = self._clients.get(client_key)
+            if client is None:
+                if len(self._clients) >= self._max_clients:
+                    self._clients.popitem(last=False)
+                client_tokens, client_updated = self._client_capacity, now
+            else:
+                client_tokens, client_updated = self._refill(
+                    client[0], client[1], now, self._client_rate, self._client_capacity,
+                )
+                self._clients.move_to_end(client_key)
+
+            global_wait = max(0.0, (1.0 - global_tokens) / self._global_rate)
+            client_wait = max(0.0, (1.0 - client_tokens) / self._client_rate)
+            self._global_tokens, self._global_updated = global_tokens, global_updated
+            self._clients[client_key] = (client_tokens, client_updated)
+            if global_wait > 0.0 or client_wait > 0.0:
+                return False, max(1, ceil(max(global_wait, client_wait)))
+
+            self._global_tokens -= 1.0
+            self._clients[client_key] = (client_tokens - 1.0, client_updated)
+            return True, 0
+
+
 class RemoteAuditService:
     """Small WSGI-compatible HTTP service core for contract tests only."""
 
@@ -671,6 +737,8 @@ class RemoteAuditService:
         repository: AuditRepository,
         authorization_policy: AuthorizationPolicy | None = None,
         approval_evidence_verifier: ApprovalEvidenceVerifier | None = None,
+        request_rate_limiter: RequestRateLimiter | None = None,
+        request_timeout_seconds: float = 8.0,
     ) -> None:
         if isinstance(repository_id, bool) or not isinstance(repository_id, int) or repository_id < 1:
             raise ValueError("repository_id must be a positive integer")
@@ -688,6 +756,13 @@ class RemoteAuditService:
         if approval_evidence_verifier is not None and not callable(getattr(approval_evidence_verifier, "verify", None)):
             raise TypeError("approval_evidence_verifier must expose verify()")
         self._approval_evidence_verifier = approval_evidence_verifier or DefaultDenyApprovalEvidenceVerifier()
+        if request_rate_limiter is not None and not callable(getattr(request_rate_limiter, "allow", None)):
+            raise TypeError("request_rate_limiter must expose allow()")
+        if isinstance(request_timeout_seconds, bool) or not isinstance(request_timeout_seconds, (int, float)) or not 0 < request_timeout_seconds <= 30:
+            raise ValueError("request_timeout_seconds must be in (0, 30]")
+        self._request_rate_limiter = request_rate_limiter or RequestRateLimiter()
+        self._request_timeout_seconds = float(request_timeout_seconds)
+        self._request_slots = threading.BoundedSemaphore(1)
 
     def handle(
         self, method: str, target: str, headers: dict[str, str] | None = None,
@@ -914,26 +989,83 @@ class RemoteAuditService:
         }})
 
     def __call__(self, environ, start_response):
-        try:
-            length = int(environ.get("CONTENT_LENGTH") or "0")
-        except ValueError:
-            length = _MAX_BODY_BYTES + 1
-        if length < 0 or length > _MAX_BODY_BYTES:
+        started = time.monotonic()
+        client_key = environ.get("REMOTE_ADDR", "unknown")
+        allowed, retry_after = self._request_rate_limiter.allow(client_key)
+        acquired = False
+        if not allowed:
             status, headers, payload = self._error(
-                413, "invalid_request", "request body exceeds 64 KiB", str(uuid.uuid4()),
+                429, "rate_limited", "request rate limit exceeded", str(uuid.uuid4()), True,
             )
+            headers["Retry-After"] = str(retry_after)
+        elif not self._request_slots.acquire(blocking=False):
+            status, headers, payload = self._error(
+                503, "capacity_limited", "request concurrency limit reached", str(uuid.uuid4()), True,
+            )
+            headers["Retry-After"] = "1"
         else:
-            body = environ["wsgi.input"].read(length) if length else b""
-            headers_in = {"Authorization": environ.get("HTTP_AUTHORIZATION", "")}
-            method = environ.get("REQUEST_METHOD", "GET")
-            target = environ.get("PATH_INFO", "/")
-            query = environ.get("QUERY_STRING", "")
-            if query:
-                target += "?" + query
-            status, headers, payload = self.handle(method, target, headers_in, body)
+            acquired = True
+            try:
+                raw_length = environ.get("CONTENT_LENGTH") or "0"
+                try:
+                    length = int(raw_length)
+                except (TypeError, ValueError):
+                    length = -1
+                if length < 0:
+                    status, headers, payload = self._error(
+                        400, "invalid_request", "Content-Length is invalid", str(uuid.uuid4()),
+                    )
+                elif length > _MAX_BODY_BYTES:
+                    status, headers, payload = self._error(
+                        413, "invalid_request", "request body exceeds 64 KiB", str(uuid.uuid4()),
+                    )
+                elif time.monotonic() - started >= self._request_timeout_seconds:
+                    status, headers, payload = self._error(
+                        408, "request_timeout", "request deadline exceeded", str(uuid.uuid4()), True,
+                    )
+                else:
+                    stream = environ.get("wsgi.input")
+                    if length and not callable(getattr(stream, "read", None)):
+                        status, headers, payload = self._error(
+                            400, "invalid_request", "request body stream is invalid", str(uuid.uuid4()),
+                        )
+                    else:
+                        body = stream.read(length) if length else b""
+                        if not isinstance(body, bytes) or len(body) != length:
+                            status, headers, payload = self._error(
+                                400, "invalid_request", "request body length does not match Content-Length", str(uuid.uuid4()),
+                            )
+                        elif time.monotonic() - started >= self._request_timeout_seconds:
+                            status, headers, payload = self._error(
+                                408, "request_timeout", "request body deadline exceeded", str(uuid.uuid4()), True,
+                            )
+                        else:
+                            authorization = environ.get("HTTP_AUTHORIZATION", "")
+                            if not isinstance(authorization, str) or len(authorization) > 16_500:
+                                status, headers, payload = self._error(
+                                    431, "invalid_request", "request headers exceed service limits", str(uuid.uuid4()),
+                                )
+                            else:
+                                headers_in = {"Authorization": authorization}
+                                method = environ.get("REQUEST_METHOD", "GET")
+                                target = environ.get("PATH_INFO", "/")
+                                query = environ.get("QUERY_STRING", "")
+                                if query:
+                                    target += "?" + query
+                                status, headers, payload = self.handle(method, target, headers_in, body)
+                                if time.monotonic() - started > self._request_timeout_seconds:
+                                    status, headers, payload = self._error(
+                                        504, "request_deadline_exceeded", "request processing deadline exceeded", str(uuid.uuid4()), True,
+                                    )
+            finally:
+                if acquired:
+                    self._request_slots.release()
+
         phrase = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
-                  404: "Not Found", 409: "Conflict", 413: "Payload Too Large",
-                  422: "Unprocessable Entity", 503: "Service Unavailable"}.get(status, "Error")
+                  404: "Not Found", 408: "Request Timeout", 409: "Conflict",
+                  413: "Payload Too Large", 422: "Unprocessable Entity",
+                  429: "Too Many Requests", 431: "Request Header Fields Too Large",
+                  503: "Service Unavailable", 504: "Gateway Timeout"}.get(status, "Error")
         response_headers = list(headers.items()) + [("Content-Length", str(len(payload)))]
         start_response(f"{status} {phrase}", response_headers)
         return [payload]
