@@ -51,7 +51,8 @@ class PostgresAuditRepository:
     @classmethod
     def from_dsn(
         cls, dsn: str, *, max_events: int = _MAX_EVENTS,
-        statement_timeout_ms: int = 5_000,
+        statement_timeout_ms: int = 3_000,
+        max_database_bytes: int = 450_000_000,
     ) -> "PostgresAuditRepository":
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("a PostgreSQL DSN is required")
