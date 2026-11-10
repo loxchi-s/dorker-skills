@@ -16,6 +16,24 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dorker_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dorker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DORKER_TEST_POSTGRES_DSN: postgresql://remote_audit_login:ci-only-password@localhost:5432/dorker_test
+      DORKER_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:postgres@localhost:5432/dorker_test
+      DORKER_TEST_POSTGRES_ROLE: remote_audit_login
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +46,42 @@ jobs:
         run: python tools/validate_registry.py --root .
       - name: Run registry tests
         run: python -m unittest discover -s tests -v
+      - name: Prepare PostgreSQL test schema
+        run: |
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/001_remote_audit_schema.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          # Reapply both migrations to verify safe idempotent reruns.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/001_remote_audit_schema.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/003_remote_audit_fk_indexes.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/004_remote_audit_login_role.sql
+          # Reapply additive migrations to verify idempotent reruns.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/003_remote_audit_fk_indexes.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/004_remote_audit_login_role.sql
+          # A stale direct CREATE grant must be normalized back to USAGE-only.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "GRANT CREATE ON SCHEMA remote_audit TO remote_audit_app;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF has_schema_privilege('remote_audit_app', 'remote_audit', 'CREATE') THEN RAISE EXCEPTION 'stale CREATE grant was not revoked'; END IF; END \$\$;"
+          # A pre-existing permissive policy must make the migration fail closed.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE POLICY unexpected_public_policy ON remote_audit.events FOR SELECT TO PUBLIC USING (true);"
+          if PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql; then
+            echo "Migration unexpectedly accepted a PUBLIC RLS policy" >&2
+            exit 1
+          fi
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DROP POLICY unexpected_public_policy ON remote_audit.events;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          # Unsafe role membership must fail closed and roll back role-attribute normalization.
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE remote_audit_parent NOLOGIN; GRANT remote_audit_parent TO remote_audit_app; ALTER ROLE remote_audit_app LOGIN SUPERUSER;"
+          if PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql; then
+            echo "Migration unexpectedly accepted an unsafe role membership" >&2
+            exit 1
+          fi
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE can_login boolean; is_super boolean; BEGIN SELECT rolcanlogin, rolsuper INTO can_login, is_super FROM pg_roles WHERE rolname = 'remote_audit_app'; IF NOT can_login OR NOT is_super THEN RAISE EXCEPTION 'failed migration did not roll back role attribute changes'; END IF; END \$\$;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "REVOKE remote_audit_parent FROM remote_audit_app; ALTER ROLE remote_audit_app NOLOGIN NOSUPERUSER; DROP ROLE remote_audit_parent;"
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/002_remote_audit_app_role.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -f agent-lab/postgres/004_remote_audit_login_role.sql
+          PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "ALTER ROLE remote_audit_login PASSWORD 'ci-only-password';"
       - name: Run agent lab tests
         run: python -m unittest discover -s agent-lab/tests -v
       - name: Compile agent lab
@@ -40,3 +94,28 @@ jobs:
           echo "DORKER_TEST_IMAGE=$IMAGE_ID" >> "$GITHUB_ENV"
       - name: Run real Docker daemon integration tests
         run: python -m unittest discover -s agent-lab/tests -p 'test_docker_integration.py' -v
+
+  live-supabase-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/postgres-audit-adapter'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: agent-lab
+    env:
+      SUPABASE_AUDIT_DSN: ${{ secrets.SUPABASE_AUDIT_DSN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Require protected connection secret
+        run: |
+          if [ -z "$SUPABASE_AUDIT_DSN" ]; then
+            echo "::error::Add SUPABASE_AUDIT_DSN in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+      - name: Install Agent Lab dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Verify direct-login identity, privileges, RLS, and adapter reads
+        run: python scripts/supabase_audit_smoke.py
