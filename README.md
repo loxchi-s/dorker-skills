@@ -12,6 +12,7 @@ Public GitHub registry for Dorker. Skills are instructions and metadata, not exe
 - `tests/test_skill_manager.py`: Skill Manager policy and integrity tests.
 - `tests/test_validate_registry.py`: validator tests.
 - `agent-lab/`: provider-agnostic coding-agent scaffold, tests and GitHub Actions CI.
+- `workbench/`: CPU-only local AI review client, bounded diff handling, tests and reusable GitHub Actions workflow (`.github/workflows/local-ai-workbench.yml`).
 - `POLICY.md`: execution and supply-chain policy.
 - `SOURCES.md`: upstream discovery references and import policy.
 - `upstream-candidates.json`: machine-readable upstream candidate registry with pinned review metadata.
