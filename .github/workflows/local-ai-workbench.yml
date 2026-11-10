@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout public Workbench implementation
-        run: git clone --depth 1 https://github.com/loxchi-s/dorker-skills.git .workbench-src
+        run: git clone --depth 1 https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,7 +47,7 @@ jobs:
           python-version: "3.12"
 
       - name: Unit test local inference client
-        working-directory: .workbench-src/workbench
+        working-directory: ${{ runner.temp }}/dorker-workbench/workbench
         run: python -m unittest -v
 
       - name: Start resource-limited local Ollama
@@ -70,7 +70,7 @@ jobs:
           LOCAL_AI_MODEL: qwen2.5:1.5b
           LOCAL_AI_REPORT: local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
-        run: python .workbench-src/workbench/local_ai.py
+        run: python "$RUNNER_TEMP/dorker-workbench/workbench/local_ai.py"
 
       - name: Upload review report
         if: always() && hashFiles('local-ai-report.md') != ''
