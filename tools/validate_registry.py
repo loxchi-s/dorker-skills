@@ -8,9 +8,52 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 REQUIRED = {"name", "description"}
 
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate mapping keys."""
+
+
+def _construct_unique_mapping(loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict:
+    loader.flatten_mapping(node)
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping", node.start_mark,
+                "found an unhashable key", key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping", node.start_mark,
+                f"found duplicate key {key!r}", key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
+)
+
+
+def _load_yaml_catalog(path: Path) -> tuple[dict | None, list[str]]:
+    try:
+        with path.open(encoding="utf-8") as stream:
+            catalog = yaml.load(stream, Loader=UniqueKeyLoader)
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        return None, [f"catalog.yaml: cannot parse: {exc}"]
+    if not isinstance(catalog, dict):
+        return None, ["catalog.yaml: top-level value must be a mapping"]
+    return catalog, []
 
 def parse_skill(path: Path) -> tuple[dict[str, str] | None, list[str]]:
     errors: list[str] = []
@@ -57,6 +100,14 @@ def validate(root: Path) -> list[str]:
         catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return [f"catalog.json: cannot parse: {exc}"]
+
+    if not isinstance(catalog, dict):
+        return ["catalog.json: top-level value must be an object"]
+
+    yaml_catalog, yaml_errors = _load_yaml_catalog(root / "catalog.yaml")
+    errors.extend(yaml_errors)
+    if yaml_catalog is not None and yaml_catalog != catalog:
+        errors.append("catalog.yaml: content does not match catalog.json")
 
     if catalog.get("schema_version") != 1:
         errors.append("catalog.json: unsupported schema_version")
@@ -116,7 +167,7 @@ def main() -> int:
             print(f"ERROR: {error}", file=sys.stderr)
         print(f"FAIL: {len(errors)} issue(s)")
         return 1
-    print("PASS: registry structure and skill metadata are valid")
+    print("PASS: registry structure, YAML/JSON parity, and skill metadata are valid")
     return 0
 
 
