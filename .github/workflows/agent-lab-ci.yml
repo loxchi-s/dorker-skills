@@ -36,6 +36,10 @@ jobs:
       DORKER_TEST_POSTGRES_ROLE: remote_audit_login
     timeout-minutes: 10
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -105,6 +109,10 @@ jobs:
     env:
       SUPABASE_AUDIT_DSN: ${{ secrets.SUPABASE_AUDIT_DSN }}
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
