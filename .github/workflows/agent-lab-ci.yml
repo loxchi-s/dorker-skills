@@ -96,7 +96,7 @@ jobs:
         run: python -m unittest discover -s agent-lab/tests -p 'test_docker_integration.py' -v
 
   live-supabase-smoke:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/postgres-audit-adapter'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:

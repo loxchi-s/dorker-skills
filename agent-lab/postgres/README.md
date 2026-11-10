@@ -2,7 +2,7 @@
 
 ## Status
 
-**PostgreSQL adapter implemented and CI-tested; schema, RLS, privilege role, indexes, and restricted LOGIN role deployed to Supabase. The live DSN is not yet configured in GitHub Actions and direct-login authentication remains unvalidated.**
+**PostgreSQL adapter implemented and CI-tested; schema, RLS, privilege role, indexes, and restricted LOGIN role deployed to Supabase. Direct-login smoke passed on commit `5d5716b8967214b5d9fd0ab8e2370482a80185b7`; the workflow is being updated to repeat that read-only check on the current protected `main` branch.**
 
 - Supabase project: `dorker-skills-audit` (Singapore)
 - Project ref: `ldqrztnihfguapsbwxpg`
@@ -12,7 +12,7 @@
 - Rows: zero at initial verification
 - Policies: 11 role-scoped policies for `remote_audit_app`; no policies for `anon` or `authenticated`
 - `remote_audit_app`: NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, NOINHERIT
-- `remote_audit_login`: LOGIN, INHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS; only membership is `remote_audit_app`. The current metadata query reports a non-NULL password hash, but the credential's validity/availability is unknown; reset or confirm it through a secure credential workflow.
+- `remote_audit_login`: LOGIN, INHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS; only membership is `remote_audit_app`. The role has a provisioned password hash; successful direct-login authentication was confirmed by the live smoke run linked below.
 - Table grants: SELECT/INSERT on append-only tables; SELECT/INSERT/UPDATE on `heads`
 - RLS enabled on all five tables; table owner remains `postgres`
 
@@ -22,9 +22,9 @@ The GitHub Actions workflow for the schema-contract commit completed successfull
 
 ## Security and connection boundary
 
-The schema is private and is not intended for direct browser access through PostgREST. The service-side adapter uses `remote_audit_login`, which inherits only the `remote_audit_app` privilege role. Its password is intentionally unset; provision it through a secure credential workflow before testing a live connection. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
+The schema is private and is not intended for direct browser access through PostgREST. The service-side adapter uses `remote_audit_login`, which inherits only the `remote_audit_app` privilege role. Its password is held only in the protected GitHub Actions secret `SUPABASE_AUDIT_DSN` for the read-only smoke check. Do not rotate or expose it through source, SQL history, logs, or chat. Do not use the `postgres` owner credential in GitHub Actions or application runtime. Never place a database password, Supabase secret/service-role key, or connection string in GitHub source, workflow logs, or client-side configuration.
 
-GitHub Actions secrets cannot be populated through this repository workflow. Add `SUPABASE_AUDIT_DSN` through GitHub repository Settings > Secrets and variables > Actions. A manual, read-only `live-supabase-smoke` job is included in `.github/workflows/agent-lab-ci.yml` and runs only when manually dispatched against `feat/postgres-audit-adapter`; it checks direct-login identity, role flags, membership, least-privilege grants, RLS, and `PostgresAuditRepository.verify(0)`. It performs no writes. Do not paste credentials into chat.
+GitHub Actions secrets cannot be populated through this repository workflow. `SUPABASE_AUDIT_DSN` must remain configured through GitHub repository Settings > Secrets and variables > Actions. The read-only `live-supabase-smoke` job now runs on pushes to protected `main` and on manual dispatch against `main`; pull-request runs skip this job. It checks direct-login identity, role flags, membership, least-privilege grants, RLS, and `PostgresAuditRepository.verify(0)`. It performs no writes. Do not paste credentials into chat. Previous successful live run: https://github.com/loxchi-s/dorker-skills/actions/runs/42757572486.
 
 ## Transaction contract for the adapter
 
