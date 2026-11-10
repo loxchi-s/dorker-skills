@@ -56,6 +56,8 @@ Supabase Free includes unlimited Data API requests, so there is no monthly API-r
 
 These are operating thresholds, not Supabase-enforced caps. The Free-plan quota is shared across projects in the organization for organization-level usage items. Database size is per project. The audit service currently uses PostgreSQL directly; it does not use Edge Functions or Realtime.
 
+The PostgreSQL adapter also checks the live database size inside the write transaction and rejects new audit writes at 450,000,000 bytes. Exact idempotent replays remain readable at the ceiling. This prevents this adapter from intentionally consuming the reserved database headroom; unrelated Supabase services and other tables can still grow the database, so keep the dashboard alert active.
+
 A read-only check on 2026-11-10 measured this project's database at 11,359,923 bytes (about 10.83 MiB, 2.27% of the 500 MB limit), with 14 of 60 PostgreSQL connections open and 1 active. The `remote_audit` tables total about 120 KiB. These are point-in-time database measurements, not monthly egress/storage/MAU usage. Egress and the other service quotas must be checked in Supabase Organization > Usage; database SQL cannot prove those organization-wide totals.
 
 Do not automatically delete audit records to preserve quota. If database usage approaches 450 MB, stop new audit writes through an explicit operational gate and plan an approved archive/retention design. Do not silently prune the hash chain.
