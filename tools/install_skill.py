@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+REVISION_RE = re.compile(r"^[0-9a-fA-F]{40,64}$")
+MAX_SKILL_BYTES = 256 * 1024
 
 
 def sha256(data: bytes) -> str:
@@ -28,16 +30,26 @@ def main() -> int:
 
     if not NAME_RE.fullmatch(args.name):
         parser.error("invalid skill name")
-    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", args.revision):
+    if not REVISION_RE.fullmatch(args.revision):
         parser.error("--revision must be a 40- or 64-character hex commit SHA")
 
     root = args.root.resolve(strict=True)
-    catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
-    entry = next((x for x in catalog["skills"] if x.get("name") == args.name), None)
+    try:
+        catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        parser.error(f"cannot read catalog.json: {exc}")
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("skills"), list):
+        parser.error("catalog.json must contain a skills list")
+
+    entry = next(
+        (item for item in catalog["skills"]
+         if isinstance(item, dict) and item.get("name") == args.name),
+        None,
+    )
     if entry is None:
         parser.error(f"skill not found in catalog: {args.name}")
-    if entry.get("status") not in {"draft", "reviewed", "tested"}:
-        parser.error("unsupported skill lifecycle status")
+    if entry.get("status") not in {"reviewed", "tested"}:
+        parser.error("only reviewed or tested skills may be installed")
     expected_rel = f"skills/{args.name}/SKILL.md"
     if entry.get("path") != expected_rel:
         parser.error("catalog path does not match canonical skill path")
@@ -51,7 +63,7 @@ def main() -> int:
         parser.error("skill path escapes registry or is not a regular file")
 
     payload = source.read_bytes()
-    if len(payload) > 256 * 1024:
+    if len(payload) > MAX_SKILL_BYTES:
         parser.error("SKILL.md exceeds 256 KiB")
     digest = sha256(payload)
 
@@ -65,10 +77,17 @@ def main() -> int:
         parser.error("target path exists and is not a directory")
     if target_file.exists():
         parser.error("skill already installed; use a separately reviewed upgrade workflow")
+    if manifest_file.is_symlink():
+        parser.error("installed.json symlink is not allowed")
+    if manifest_file.exists() and not manifest_file.is_file():
+        parser.error("installed.json must be a regular file")
 
     manifest = {}
     if manifest_file.exists():
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            parser.error(f"cannot read installed.json: {exc}")
     if not isinstance(manifest, dict):
         parser.error("installed.json must contain a JSON object")
 
