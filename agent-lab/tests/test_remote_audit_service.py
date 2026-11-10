@@ -23,6 +23,7 @@ from dorker_agent.remote_audit_service import (
     InMemoryAuditRepository,
     SQLiteAuditRepository,
     RemoteAuditService,
+    RequestRateLimiter,
 )
 
 
@@ -585,6 +586,92 @@ class RemoteAuditServiceTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(json.loads(payload)["error"]["code"], "invalid_request")
         self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
+
+    def test_request_rate_limiter_refills_and_bounds_client_state(self):
+        now = [0.0]
+        limiter = RequestRateLimiter(
+            global_rate_per_minute=1, global_burst=1,
+            per_client_rate_per_minute=1, per_client_burst=1,
+            max_clients=2, clock=lambda: now[0],
+        )
+        self.assertEqual(limiter.allow("client-a"), (True, 0))
+        allowed, retry_after = limiter.allow("client-a")
+        self.assertFalse(allowed)
+        self.assertGreaterEqual(retry_after, 1)
+        now[0] = 60.0
+        self.assertEqual(limiter.allow("client-a"), (True, 0))
+        limiter.allow("client-b")
+        limiter.allow("client-c")
+        self.assertLessEqual(len(limiter._clients), 2)
+
+    def test_wsgi_rate_limit_returns_429_with_retry_after(self):
+        import io
+        limiter = RequestRateLimiter(
+            global_rate_per_minute=1, global_burst=1,
+            per_client_rate_per_minute=1, per_client_burst=1,
+        )
+        service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=TestIdentityVerifier(),
+            repository=InMemoryAuditRepository(),
+            authorization_policy=TestAllowAuthorizationPolicy(),
+            request_rate_limiter=limiter,
+        )
+
+        def invoke():
+            environ = {
+                "REQUEST_METHOD": "GET",
+                "PATH_INFO": "/v1/audit/health",
+                "QUERY_STRING": "",
+                "CONTENT_LENGTH": "0",
+                "HTTP_AUTHORIZATION": f"Bearer {self.creator}",
+                "REMOTE_ADDR": "198.51.100.7",
+                "wsgi.input": io.BytesIO(b""),
+            }
+            captured = {}
+            def start_response(status, headers):
+                captured["status"] = status
+                captured["headers"] = dict(headers)
+            payload = b"".join(service(environ, start_response))
+            return captured, json.loads(payload)
+
+        first, _ = invoke()
+        self.assertEqual(first["status"], "200 OK")
+        second, error = invoke()
+        self.assertEqual(second["status"], "429 Too Many Requests")
+        self.assertGreaterEqual(int(second["headers"]["Retry-After"]), 1)
+        self.assertEqual(error["error"]["code"], "rate_limited")
+
+    def test_wsgi_request_deadline_returns_504(self):
+        import io
+
+        class SlowIdentityVerifier:
+            def verify(inner_self, claim):
+                time.sleep(0.02)
+                return TestIdentityVerifier().verify(claim)
+
+        service = RemoteAuditService(
+            repository_id=1450173940,
+            identity_verifier=SlowIdentityVerifier(),
+            repository=InMemoryAuditRepository(),
+            authorization_policy=TestAllowAuthorizationPolicy(),
+            request_timeout_seconds=0.001,
+        )
+        environ = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/v1/audit/health",
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": "0",
+            "HTTP_AUTHORIZATION": f"Bearer {self.creator}",
+            "REMOTE_ADDR": "198.51.100.8",
+            "wsgi.input": io.BytesIO(b""),
+        }
+        captured = {}
+        def start_response(status, headers):
+            captured["status"] = status
+        payload = b"".join(service(environ, start_response))
+        self.assertEqual(captured["status"], "504 Gateway Timeout")
+        self.assertEqual(json.loads(payload)["error"]["code"], "request_deadline_exceeded")
 
     def test_wsgi_adapter(self):
         import io
