@@ -1,6 +1,6 @@
 # Dorker Skills Registry
 
-Private GitHub registry for Dorker. Skills are instructions and metadata, not executable code.
+Public GitHub registry for Dorker. Skills are instructions and metadata, not executable code.
 
 ## Repository layout
 - `catalog.json`: machine-readable registry index (standard JSON; no YAML dependency).
