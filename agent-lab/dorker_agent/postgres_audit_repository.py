@@ -32,7 +32,7 @@ class PostgresAuditRepository:
         connection_factory: Callable[[], object],
         *,
         max_events: int = _MAX_EVENTS,
-        statement_timeout_ms: int = 5_000,
+        statement_timeout_ms: int = 3_000,
     ) -> None:
         if not callable(connection_factory):
             raise TypeError("connection_factory must be callable")
@@ -61,7 +61,7 @@ class PostgresAuditRepository:
             return psycopg.connect(
                 dsn,
                 row_factory=dict_row,
-                connect_timeout=5,
+                connect_timeout=2,
                 application_name="dorker-remote-audit",
             )
 
@@ -76,7 +76,12 @@ class PostgresAuditRepository:
         return value
 
     def _configure(self, cursor) -> None:
-        cursor.execute("SELECT set_config('statement_timeout', %s, true)", (str(self._statement_timeout_ms),))
+        cursor.execute(
+            "SELECT set_config('statement_timeout', %s, true), "
+            "set_config('lock_timeout', %s, true), "
+            "set_config('idle_in_transaction_session_timeout', %s, true)",
+            (str(self._statement_timeout_ms), "1000", "5000"),
+        )
 
     def _verify_cursor(self, cursor, repository_id: int) -> bool:
         previous = _ZERO_HASH
