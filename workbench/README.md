@@ -36,9 +36,9 @@ jobs:
       prompt: "Review correctness, security, performance, and missing tests."
 ```
 
-The reusable workflow checks out the caller repository, not this skills repository.
-The caller must allow reusable workflows from `loxchi-s/dorker-skills` under its Actions
-settings. For private repositories, confirm GitHub's reusable-workflow access policy.
+The reusable workflow checks out the caller repository, then clones this public repository
+without credentials to obtain the runner script. The caller must allow reusable workflows
+from `loxchi-s/dorker-skills` under its Actions settings. For private repositories, confirm GitHub's reusable-workflow access policy.
 
 ## Resource profile
 
