@@ -996,7 +996,7 @@ class RemoteAuditService:
         acquired = False
         if not allowed:
             status, headers, payload = self._error(
-                429, "rate_limited", "request rate limit exceeded", str(uuid.uuid4()), True,
+                429, "rate_limited", "request rate limit exceeded", str(uuid.uuid4()),
             )
             headers["Retry-After"] = str(retry_after)
         elif not self._request_slots.acquire(blocking=False):
@@ -1031,10 +1031,13 @@ class RemoteAuditService:
                             400, "invalid_request", "request body stream is invalid", str(uuid.uuid4()),
                         )
                     else:
-                        body = stream.read(length) if length else b""
+                        try:
+                            body = stream.read(length) if length else b""
+                        except Exception:
+                            body = None
                         if not isinstance(body, bytes) or len(body) != length:
                             status, headers, payload = self._error(
-                                400, "invalid_request", "request body length does not match Content-Length", str(uuid.uuid4()),
+                                400, "invalid_request", "request body could not be read completely", str(uuid.uuid4()),
                             )
                         elif time.monotonic() - started >= self._request_timeout_seconds:
                             status, headers, payload = self._error(
@@ -1042,15 +1045,20 @@ class RemoteAuditService:
                             )
                         else:
                             authorization = environ.get("HTTP_AUTHORIZATION", "")
-                            if not isinstance(authorization, str) or len(authorization) > 16_500:
+                            method = environ.get("REQUEST_METHOD", "GET")
+                            target = environ.get("PATH_INFO", "/")
+                            query = environ.get("QUERY_STRING", "")
+                            if (
+                                not isinstance(authorization, str) or len(authorization) > 16_500
+                                or not isinstance(method, str)
+                                or not isinstance(target, str)
+                                or not isinstance(query, str)
+                            ):
                                 status, headers, payload = self._error(
-                                    431, "invalid_request", "request headers exceed service limits", str(uuid.uuid4()),
+                                    431, "invalid_request", "request headers or target exceed service limits", str(uuid.uuid4()),
                                 )
                             else:
                                 headers_in = {"Authorization": authorization}
-                                method = environ.get("REQUEST_METHOD", "GET")
-                                target = environ.get("PATH_INFO", "/")
-                                query = environ.get("QUERY_STRING", "")
                                 if query:
                                     target += "?" + query
                                 status, headers, payload = self.handle(method, target, headers_in, body)
