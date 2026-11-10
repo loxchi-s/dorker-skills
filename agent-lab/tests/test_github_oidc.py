@@ -236,7 +236,7 @@ class GitHubActionsOIDCIdentityProviderTests(unittest.TestCase):
             claim = identity.acquire_claim()
             plan = ArtifactDeletionPlan((), 0, 0, "a" * 64)
 
-            index.record_gc_plan(plan, claim=claim)
+            index.record_gc_plan(plan, claim=claim, idempotency_key="oidc-plan-identity")
 
             events = index.list_audit_events()
             self.assertEqual(len(events), 1)
@@ -361,7 +361,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
             forged = GitHubActorClaim(202, "attacker", token)
             plan = ArtifactDeletionPlan((), 0, 0, "b" * 64)
             with self.assertRaisesRegex(OIDCVerificationError, "supplied GitHub actor"):
-                index.record_gc_plan(plan, claim=forged)
+                index.record_gc_plan(plan, claim=forged, idempotency_key="oidc-forged-plan")
             self.assertEqual(index.list_audit_events(), [])
             self.assertTrue(index.verify_audit_log())
 
@@ -382,11 +382,12 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
             )
             plan = ArtifactDeletionPlan((), 0, 0, "c" * 64)
             creator_claim = identity.acquire_claim()
-            index.record_gc_plan(plan, claim=creator_claim)
+            index.record_gc_plan(plan, claim=creator_claim, idempotency_key="oidc-plan-creator")
 
             with self.assertRaisesRegex(ValueError, "different GitHub actor"):
                 index.record_gc_approval(
                     plan.approval_token, claim=creator_claim, approved=True,
+                    idempotency_key="oidc-creator-approval",
                 )
             self.assertEqual(len(index.list_audit_events()), 1)
 
@@ -394,6 +395,7 @@ class GitHubActionsOIDCVerifierTests(unittest.TestCase):
             approver_claim = identity.acquire_claim()
             index.record_gc_approval(
                 plan.approval_token, claim=approver_claim, approved=True,
+                idempotency_key="oidc-approver-decision",
             )
 
             events = index.list_audit_events()

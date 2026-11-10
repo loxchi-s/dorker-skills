@@ -41,6 +41,13 @@ from .isolated_worker import (
     WorkerOutputLimitError,
     WorkerTimeoutError,
 )
+from .remote_audit import (
+    AuditClientError, AuditOutcomeIndeterminate, AuditRequestRejected,
+    AuditServiceUnavailable, RemoteAuditHttpClient,
+)
+from .remote_audit_service import (
+    AuditServiceError, InMemoryAuditRepository, RemoteAuditService,
+)
 from .execution import (
     DuplicateExecutionError, ExecutionRecord, ExecutionState, InMemoryExecutionLedger,
     SQLiteExecutionStore, ExecutionControl, ExecutionCancelledError, ExecutionDeadlineExceeded,
@@ -88,4 +95,12 @@ __all__ = [
     "WorkerCrashedError",
     "WorkerHandlerError",
     "WorkerOutputLimitError",
+    "AuditClientError",
+    "AuditOutcomeIndeterminate",
+    "AuditRequestRejected",
+    "AuditServiceUnavailable",
+    "RemoteAuditHttpClient",
+    "AuditServiceError",
+    "InMemoryAuditRepository",
+    "RemoteAuditService",
 ]

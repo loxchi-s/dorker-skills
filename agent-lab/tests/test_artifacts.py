@@ -320,10 +320,10 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        created_hash = self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        created_hash = self.index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-16")
         approved_hash = self.index.record_gc_approval(
             plan.approval_token, claim=github_claim(202, "approver"), approved=True,
-        )
+        idempotency_key="contract-artifact-15")
         events = self.index.list_audit_events()
         self.assertEqual([event["action"] for event in events], [
             "gc_plan_created", "gc_plan_approved",
@@ -343,16 +343,16 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-14")
         with self.assertRaisesRegex(ValueError, "already been recorded"):
-            self.index.record_gc_plan(plan, claim=github_claim(202, "other"))
+            self.index.record_gc_plan(plan, claim=github_claim(202, "other"), idempotency_key="contract-artifact-13")
         self.index.record_gc_approval(
             plan.approval_token, claim=github_claim(202, "approver"), approved=True,
-        )
+        idempotency_key="contract-artifact-12")
         with self.assertRaisesRegex(ValueError, "already has a recorded decision"):
             self.index.record_gc_approval(
                 plan.approval_token, claim=github_claim(303, "another"), approved=False,
-            )
+            idempotency_key="contract-artifact-11")
         self.assertEqual(len(self.index.list_audit_events()), 2)
 
     def test_gc_audit_requires_distinct_verified_github_actor(self):
@@ -363,17 +363,17 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-10")
         with self.assertRaisesRegex(ValueError, "different GitHub actor"):
             self.index.record_gc_approval(
                 plan.approval_token, claim=github_claim(101, "creator"), approved=True,
-            )
+            idempotency_key="contract-artifact-9")
         with self.assertRaisesRegex(ValueError, "invalid test OIDC proof"):
             self.index.record_gc_approval(
                 plan.approval_token,
                 claim=GitHubActorClaim(202, "approver", "forged"),
                 approved=True,
-            )
+            idempotency_key="contract-artifact-8")
         self.assertEqual(len(self.index.list_audit_events()), 1)
 
     def test_gc_audit_fails_closed_without_identity_verifier(self):
@@ -386,17 +386,17 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             now_unix_ns=10_000_000_000,
         )
         with self.assertRaisesRegex(RuntimeError, "not configured"):
-            index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+            index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-7")
 
     def test_gc_audit_rejects_approval_without_recorded_plan(self):
         with self.assertRaisesRegex(ValueError, "no recorded GC plan"):
-            self.index.record_gc_approval("a" * 64, claim=github_claim(101, "creator"), approved=True)
+            self.index.record_gc_approval("a" * 64, claim=github_claim(101, "creator"), approved=True, idempotency_key="contract-artifact-6")
 
     def test_gc_audit_rejects_invalid_actor_and_approval_type(self):
         with self.assertRaises(ValueError):
-            self.index.record_gc_approval("a" * 64, claim=GitHubActorClaim(0, " ", "bad"), approved=True)
+            self.index.record_gc_approval("a" * 64, claim=GitHubActorClaim(0, " ", "bad"), approved=True, idempotency_key="contract-artifact-5")
         with self.assertRaises(TypeError):
-            self.index.record_gc_approval("a" * 64, claim=github_claim(101, "creator"), approved=1)
+            self.index.record_gc_approval("a" * 64, claim=github_claim(101, "creator"), approved=1, idempotency_key="contract-artifact-4")
 
     def test_gc_audit_log_capacity_is_bounded(self):
         index = SQLiteArtifactIndex(
@@ -410,9 +410,22 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-3")
         with self.assertRaisesRegex(RuntimeError, "capacity"):
-            index.record_gc_approval(plan.approval_token, claim=github_claim(202, "approver"), approved=False)
+            index.record_gc_approval(
+                plan.approval_token, claim=github_claim(202, "approver"),
+                approved=False, idempotency_key="capacity-retry-approval",
+            )
+        reopened = SQLiteArtifactIndex(
+            self.db, self.blobs, max_audit_records=2,
+            identity_verifier=FakeGitHubIdentityVerifier(),
+        )
+        reopened.record_gc_approval(
+            plan.approval_token, claim=github_claim(202, "approver"),
+            approved=False, idempotency_key="capacity-retry-approval",
+        )
+        self.assertEqual(len(reopened.list_audit_events()), 2)
+        self.assertTrue(reopened.verify_audit_log())
 
     def test_gc_audit_hash_chain_detects_database_tampering(self):
         blob = self.blobs.put(b"orphan", name="x", media_type="x", source="test")
@@ -422,7 +435,7 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             ArtifactRetentionPolicy(min_age_seconds=1),
             now_unix_ns=10_000_000_000,
         )
-        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"))
+        self.index.record_gc_plan(plan, claim=github_claim(101, "creator"), idempotency_key="contract-artifact-1")
         self.assertTrue(self.index.verify_audit_log())
         with sqlite3.connect(self.db) as db:
             db.execute(
