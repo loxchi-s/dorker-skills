@@ -1,0 +1,59 @@
+name: Dorker Daily Audit
+
+on:
+  schedule:
+    - cron: "0 23 * * *" # 06:00 Asia/Bangkok
+    - cron: "0 3 * * *"  # 10:00 Asia/Bangkok
+    - cron: "0 7 * * *"  # 14:00 Asia/Bangkok
+    - cron: "0 11 * * *" # 18:00 Asia/Bangkok
+    - cron: "0 15 * * *" # 22:00 Asia/Bangkok
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: Audit slot to execute manually
+        required: true
+        type: choice
+        options:
+          - repo_ci
+          - security
+          - quality
+          - pr_readiness
+          - daily_summary
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  security-events: read
+
+concurrency:
+  group: dorker-daily-audit-\${{ github.workflow }}-\${{ github.event.schedule || inputs.slot || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: false
+      - name: Run read-only audit
+        env:
+          GITHUB_TOKEN: \${{ github.token }}
+          GITHUB_REPOSITORY: \${{ github.repository }}
+          DORKER_SCHEDULE: \${{ github.event.schedule }}
+          DORKER_SLOT: \${{ inputs.slot }}
+        run: python tools/dorker_daily_audit.py --output-dir reports
+      - name: Upload audit reports
+        if: always() && hashFiles('reports/*') != ''
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: dorker-audit-\${{ github.run_id }}-\${{ github.run_attempt }}
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
