@@ -169,15 +169,35 @@ def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]
         "endpoints": {},
         "summary": {},
     }
+    summary: dict[str, Any] = {
+        "default_branch": None,
+        "open_pull_requests": None,
+        "workflow_runs_observed": None,
+        "workflow_failures_observed": None,
+        "dependabot_alerts_open": None,
+        "code_scanning_alerts_open": None,
+    }
     for name in SLOT_ENDPOINTS[slot]:
         try:
             if name == "repository":
-                report["endpoints"][name] = {"status": "ok", "data": client.get(endpoint_path(repo, name))}
+                repository_data = client.get(endpoint_path(repo, name))
+                summary["default_branch"] = repository_data.get("default_branch")
+                report["endpoints"][name] = {"status": "ok"}
             else:
                 items, truncated = client.list(endpoint_path(repo, name))
                 entry = {"status": "ok", "count": len(items), "truncated": truncated}
-                if name not in ALERT_ENDPOINTS:
-                    entry["items"] = items
+                if name == "pull_requests":
+                    summary["open_pull_requests"] = len(items)
+                elif name == "workflow_runs":
+                    summary["workflow_runs_observed"] = len(items)
+                    summary["workflow_failures_observed"] = sum(
+                        run.get("conclusion") in {"failure", "timed_out", "action_required"}
+                        for run in items
+                    )
+                elif name == "dependabot_alerts":
+                    summary["dependabot_alerts_open"] = len(items)
+                elif name == "code_scanning_alerts":
+                    summary["code_scanning_alerts_open"] = len(items)
                 report["endpoints"][name] = entry
                 if truncated:
                     report["complete"] = False
@@ -188,23 +208,7 @@ def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]
             report["complete"] = False
             report["endpoints"][name] = {"status": "error", "reason": "transport_or_payload_error"}
 
-    repo_data = report["endpoints"].get("repository", {}).get("data", {})
-    runs = report["endpoints"].get("workflow_runs", {}).get("items", [])
-    prs = report["endpoints"].get("pull_requests", {}).get("items", [])
-    dependabot_entry = report["endpoints"].get("dependabot_alerts", {})
-    code_alerts_entry = report["endpoints"].get("code_scanning_alerts", {})
-    dependabot_count = dependabot_entry.get("count") if dependabot_entry.get("status") == "ok" else None
-    code_alerts_count = code_alerts_entry.get("count") if code_alerts_entry.get("status") == "ok" else None
-    report["summary"] = {
-        "default_branch": repo_data.get("default_branch") if isinstance(repo_data, dict) else None,
-        "open_pull_requests": len(prs),
-        "workflow_runs_observed": len(runs),
-        "workflow_failures_observed": sum(
-            run.get("conclusion") in {"failure", "timed_out", "action_required"} for run in runs
-        ),
-        "dependabot_alerts_open": dependabot_count,
-        "code_scanning_alerts_open": code_alerts_count,
-    }
+    report["summary"] = summary
     return report
 
 
