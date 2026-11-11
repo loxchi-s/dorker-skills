@@ -152,7 +152,13 @@ def endpoint_path(repo: str, name: str) -> str:
     return paths[name]
 
 
-def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]:
+def collect_report(
+    client: GitHubClient,
+    repo: str,
+    slot: str,
+    dependabot_client: GitHubClient | None = None,
+    dependabot_unavailable_reason: str = "app_credentials_not_configured",
+) -> dict[str, Any]:
     """Collect an audit snapshot while excluding sensitive alert payloads."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise AuditError("GITHUB_REPOSITORY must use owner/repository format")
@@ -184,7 +190,19 @@ def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]
                 summary["default_branch"] = repository_data.get("default_branch")
                 report["endpoints"][name] = {"status": "ok"}
             else:
-                items, truncated = client.list(endpoint_path(repo, name))
+                if name == "dependabot_alerts" and dependabot_client is None:
+                    report["complete"] = False
+                    report["endpoints"][name] = {
+                        "status": "unavailable",
+                        "reason": dependabot_unavailable_reason,
+                    }
+                    continue
+                endpoint_client = (
+                    dependabot_client
+                    if name == "dependabot_alerts"
+                    else client
+                )
+                items, truncated = endpoint_client.list(endpoint_path(repo, name))
                 entry = {"status": "ok", "count": len(items), "truncated": truncated}
                 if name == "pull_requests":
                     summary["open_pull_requests"] = len(items)
@@ -252,7 +270,22 @@ def main() -> int:
     args = parser.parse_args()
     try:
         slot = resolve_slot(args.schedule or None, args.slot or None)
-        report = collect_report(GitHubClient(os.getenv("GITHUB_TOKEN", "")), args.repository, slot)
+        primary_client = GitHubClient(os.getenv("GITHUB_TOKEN", ""))
+        dependabot_token = os.getenv("DEPENDABOT_GITHUB_TOKEN", "")
+        app_configured = os.getenv("DEPENDABOT_APP_CONFIGURED", "").lower() == "true"
+        dependabot_client = GitHubClient(dependabot_token) if dependabot_token else None
+        unavailable_reason = (
+            "installation_token_unavailable"
+            if app_configured
+            else "app_credentials_not_configured"
+        )
+        report = collect_report(
+            primary_client,
+            args.repository,
+            slot,
+            dependabot_client=dependabot_client,
+            dependabot_unavailable_reason=unavailable_reason,
+        )
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "dorker-audit.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

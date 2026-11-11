@@ -252,13 +252,53 @@ class ReportTests(unittest.TestCase):
                     return [{"secret_rule_detail": "private-code-location"}], False
                 return super().list(path)
 
-        report = collect_report(AlertClient(), "owner/repo", "security")
+        client = AlertClient()
+        report = collect_report(
+            client,
+            "owner/repo",
+            "security",
+            dependabot_client=client,
+        )
         self.assertEqual(report["summary"]["dependabot_alerts_open"], 1)
         self.assertEqual(report["summary"]["code_scanning_alerts_open"], 1)
         self.assertNotIn("items", report["endpoints"]["dependabot_alerts"])
         self.assertNotIn("items", report["endpoints"]["code_scanning_alerts"])
         self.assertNotIn("private-dependency-data", str(report))
         self.assertNotIn("private-code-location", str(report))
+
+    def test_dependabot_uses_dedicated_app_client(self):
+        """Route Dependabot inventory through the dedicated installation token."""
+        primary_client = FakeClient()
+
+        class AppClient(FakeClient):
+            """Represent the separately authenticated GitHub App client."""
+
+            def list(self, path):
+                """Return a distinct alert count for the Dependabot endpoint."""
+                self.calls.append(("list", path))
+                if "dependabot/alerts" in path:
+                    return [{"id": 1}, {"id": 2}], False
+                return [], False
+
+        app_client = AppClient()
+        report = collect_report(
+            primary_client,
+            "owner/repo",
+            "security",
+            dependabot_client=app_client,
+        )
+        self.assertEqual(report["summary"]["dependabot_alerts_open"], 2)
+        self.assertFalse(any("dependabot/alerts" in call[1] for call in primary_client.calls))
+        self.assertTrue(any("dependabot/alerts" in call[1] for call in app_client.calls))
+
+    def test_missing_dependabot_app_credentials_is_incomplete(self):
+        """Keep Dependabot count unknown when App credentials are not configured."""
+        report = collect_report(FakeClient(), "owner/repo", "security")
+        endpoint = report["endpoints"]["dependabot_alerts"]
+        self.assertFalse(report["complete"])
+        self.assertEqual(endpoint["status"], "unavailable")
+        self.assertEqual(endpoint["reason"], "app_credentials_not_configured")
+        self.assertIsNone(report["summary"]["dependabot_alerts_open"])
 
     def test_missing_security_permission_is_incomplete_and_count_unknown(self):
         """Do not misreport inaccessible alert endpoints as zero alerts."""
@@ -271,7 +311,13 @@ class ReportTests(unittest.TestCase):
                     raise GitHubAPIError(403)
                 return super().list(path)
 
-        report = collect_report(RestrictedClient(), "owner/repo", "security")
+        client = RestrictedClient()
+        report = collect_report(
+            client,
+            "owner/repo",
+            "security",
+            dependabot_client=client,
+        )
         self.assertFalse(report["complete"])
         self.assertEqual(report["endpoints"]["dependabot_alerts"]["status"], "unavailable")
         self.assertIsNone(report["summary"]["dependabot_alerts_open"])
