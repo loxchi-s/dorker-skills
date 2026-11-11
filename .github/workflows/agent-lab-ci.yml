@@ -51,6 +51,10 @@ jobs:
         run: python tools/validate_registry.py --root .
       - name: Run registry tests
         run: python -m unittest discover -s tests -v
+      - name: Run Dorker daily audit tests
+        run: python -m unittest discover -s tests -p 'test_dorker_daily_audit.py' -v
+      - name: Compile Dorker daily audit worker
+        run: python -m py_compile tools/dorker_daily_audit.py
       - name: Prepare PostgreSQL test schema
         run: |
           PGPASSWORD=postgres psql "postgresql://postgres@localhost:5432/dorker_test" -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;"
