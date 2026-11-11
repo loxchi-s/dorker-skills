@@ -151,7 +151,7 @@ class ReportTests(unittest.TestCase):
 
             def read(self, limit):
                 """Return bytes that cannot be decoded as UTF-8."""
-                return b"\\xff"
+                return b"\xff"
 
         client = GitHubClient("test-token")
         with patch("dorker_daily_audit.urllib.request.urlopen", return_value=FakeResponse()):
@@ -276,8 +276,8 @@ class ReportTests(unittest.TestCase):
             "summary": {"signal|injected": 1}, "endpoints": {"repository": {"status": "ok"}},
         }
         rendered = render_markdown(report)
-        self.assertIn(r"task \\| injected", rendered)
-        self.assertIn(r"signal\\|injected", rendered)
+        self.assertIn(r"task \| injected", rendered)
+        self.assertIn(r"signal\|injected", rendered)
 
 
 if __name__ == "__main__":
