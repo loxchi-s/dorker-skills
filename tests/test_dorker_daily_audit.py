@@ -51,6 +51,15 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(set(report["endpoints"]), set(SLOT_ENDPOINTS["repo_ci"]))
         self.assertEqual(len(client.calls), 3)
 
+    def test_workflow_runs_object_payload_is_supported(self):
+        from dorker_daily_audit import GitHubClient
+
+        client = GitHubClient("test-token")
+        client._request = lambda url: ({"total_count": 2, "workflow_runs": [{"id": 1}, {"id": 2}]}, None)
+        items, truncated = client.list("/repos/owner/repo/actions/runs?per_page=100")
+        self.assertEqual(len(items), 2)
+        self.assertFalse(truncated)
+
     def test_missing_security_permission_is_incomplete(self):
         from dorker_daily_audit import GitHubAPIError
 
