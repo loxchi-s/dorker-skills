@@ -33,6 +33,9 @@ concurrency:
 
 jobs:
   audit:
+    # Scheduled runs remain disabled until an owner explicitly opts in via a repository variable.
+    # Manual dispatch is available after this workflow reaches the default branch for a smoke test.
+    if: github.event_name == 'workflow_dispatch' || vars.DORKER_AUTOMATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
