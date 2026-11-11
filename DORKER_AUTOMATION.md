@@ -4,7 +4,7 @@
 
 GitHub Actions is the scheduler and execution boundary. The workflow invokes a deterministic, read-only Python auditor; it does not instantiate a second agent runtime or execute skill definitions. The existing Agent Lab remains a separate scaffold and receives no new runtime capabilities from this workflow.
 
-The auditor uses the workflow-provided GitHub token for authenticated GET requests only. Permissions are limited to repository contents, Actions runs, pull requests, code-scanning alerts, and Dependabot alerts. The workflow writes JSON and Markdown summary reports to the job workspace and uploads them as a 30-day artifact. Vulnerability alert payloads are intentionally discarded after counting and are never persisted in reports. It does not write repository contents, create issues or pull requests, merge, deploy, invoke Supabase, or run arbitrary model-generated commands.
+The auditor uses the workflow-provided GITHUB_TOKEN for authenticated GET requests to repository metadata, Actions runs, pull requests, and code-scanning alerts. Dependabot alerts use a separate GitHub App installation token scoped to `loxchi-s/dorker-skills`, with only `Dependabot alerts: read` and `Metadata: read` permissions. The App token is created only when both repository Actions credentials are configured. The workflow writes JSON and Markdown summary reports to the job workspace and uploads them as a 30-day artifact. Vulnerability alert payloads are intentionally discarded after counting and are never persisted in reports. It does not write repository contents, create issues or pull requests, merge, deploy, invoke Supabase, or run arbitrary model-generated commands.
 
 ## Schedule (Asia/Bangkok)
 
@@ -34,7 +34,8 @@ Each run is independent and read-only. The workflow does not claim exactly-once 
 
 ## Security boundaries
 
-- permissions are explicitly read-only: contents, actions, pull requests, code-scanning alerts, and Dependabot alerts.
+- `GITHUB_TOKEN` permissions are read-only for contents, Actions, pull requests, and code-scanning alerts; it does not receive the Dependabot alerts permission.
+- The GitHub App token is scoped to the single `dorker-skills` repository and explicitly requests only `vulnerability-alerts: read` and `metadata: read`.
 - Third-party actions are pinned to immutable commit SHAs.
 - The API client only sends the token to https://api.github.com, uses HTTPS, applies request timeouts, and bounds response size.
 - Security alert details are not included in report JSON, Markdown, logs, or artifacts; only counts and endpoint status are retained.
@@ -49,6 +50,7 @@ Each run is independent and read-only. The workflow does not claim exactly-once 
 - [ ] All API calls are GET-only, bounded by request timeout, response-size limit, and pagination limit.
 - [ ] Dependabot and code-scanning response details are excluded from all persisted reports; counts remain available.
 - [ ] Inaccessible or truncated endpoints produce an incomplete report and do not imply zero alerts.
+- [ ] Dependabot requests use the dedicated GitHub App token; missing credentials or failed token minting produce an unavailable endpoint with a null count.
 - [ ] Unit tests, Python compilation, Agent Lab CI, CodeQL, and OSV checks pass on the final PR head.
 - [ ] After merge, a manual workflow dispatch completes and uploads both report artifacts while scheduled execution remains gated.
 - [ ] No merge, deployment, repository write, or Supabase mutation is performed by this workflow.
@@ -60,7 +62,7 @@ Run locally:
     python -m unittest discover -s tests -p 'test_dorker_daily_audit.py' -v
     python -m py_compile tools/dorker_daily_audit.py
 
-The first manual GitHub Actions dispatch after merge is required to validate workflow trigger parsing, GITHUB_TOKEN permissions, security endpoint availability, and artifact upload. The schedule remains disabled until an owner sets `DORKER_AUTOMATION_ENABLED=true` in repository Actions variables. Scheduled execution is not considered operationally validated until the owner enables the gate and a scheduled run is observed.
+The first manual GitHub Actions dispatch after merge is required to validate workflow trigger parsing, GITHUB_TOKEN permissions, GitHub App token creation, Dependabot endpoint availability, and artifact upload. Configure repository Actions secrets `DORKER_APP_ID` (App ID `5709420`) and `DORKER_APP_PRIVATE_KEY` (the generated PEM contents) before expecting a complete security report. Never commit the PEM file or print its contents. The schedule remains disabled until an owner sets `DORKER_AUTOMATION_ENABLED=true` in repository Actions variables. Scheduled execution is not considered operationally validated until the owner enables the gate and a scheduled run is observed.
 
 ## Rollback
 
@@ -71,4 +73,4 @@ The first manual GitHub Actions dispatch after merge is required to validate wor
 
 ## Operational impact and known limitations
 
-The workflow performs read-only API requests five times per day and stores summary artifacts for 30 days. GitHub may delay scheduled start times. Security endpoint availability depends on repository feature configuration and token permissions. Pagination is intentionally capped at five pages; larger inventories are marked incomplete. This workflow does not create issues, auto-fix code, approve PRs, or merge changes.
+The workflow performs read-only API requests five times per day and stores summary artifacts for 30 days. GitHub may delay scheduled start times. Dependabot inventory requires repository Actions secrets `DORKER_APP_ID` and `DORKER_APP_PRIVATE_KEY` for the installed read-only GitHub App. If credentials are absent or token creation fails, the endpoint is marked unavailable and the report remains incomplete. Pagination is intentionally capped at five pages; larger inventories are marked incomplete. This workflow does not create issues, auto-fix code, approve PRs, or merge changes.
