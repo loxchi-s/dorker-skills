@@ -60,6 +60,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(items), 2)
         self.assertFalse(truncated)
 
+    def test_truncated_inventory_is_incomplete(self):
+        class TruncatedClient(FakeClient):
+            def list(self, path):
+                self.calls.append(("list", path))
+                return [], True
+
+        report = collect_report(TruncatedClient(), "owner/repo", "repo_ci")
+        self.assertFalse(report["complete"])
+        self.assertTrue(report["endpoints"]["workflow_runs"]["truncated"])
+
     def test_missing_security_permission_is_incomplete(self):
         from dorker_daily_audit import GitHubAPIError
 
