@@ -74,7 +74,10 @@ class GitHubClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                return json.loads(response.read().decode("utf-8")), response.headers.get("Link")
+                raw = response.read(2_000_001)
+                if len(raw) > 2_000_000:
+                    raise AuditError("GitHub API response exceeded the 2 MB safety limit")
+                return json.loads(raw.decode("utf-8")), response.headers.get("Link")
         except urllib.error.HTTPError as exc:
             raise GitHubAPIError(exc.code) from None
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
@@ -88,9 +91,14 @@ class GitHubClient:
         url = API_ROOT + path
         for _ in range(MAX_PAGES):
             payload, link_header = self._request(url)
-            if not isinstance(payload, list):
-                raise AuditError("GitHub list endpoint returned a non-list payload")
-            items.extend(payload)
+            if isinstance(payload, list):
+                page_items = payload
+            elif isinstance(payload, dict) and isinstance(payload.get("workflow_runs"), list):
+                # GitHub Actions returns {total_count, workflow_runs}, unlike other list endpoints.
+                page_items = payload["workflow_runs"]
+            else:
+                raise AuditError("GitHub list endpoint returned an unsupported payload")
+            items.extend(page_items)
             next_url = None
             if link_header:
                 for part in link_header.split(","):
