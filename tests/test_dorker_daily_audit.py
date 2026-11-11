@@ -171,6 +171,37 @@ class ReportTests(unittest.TestCase):
         self.assertFalse(report["complete"])
         self.assertTrue(report["endpoints"]["workflow_runs"]["truncated"])
 
+    def test_repository_pr_and_workflow_payloads_are_not_persisted(self):
+        """Persist only required summary fields, not full GitHub API objects."""
+        class DetailedClient(FakeClient):
+            def get(self, path):
+                self.calls.append(("get", path))
+                return {"default_branch": "main", "private_metadata": "must-not-persist"}
+
+            def list(self, path):
+                self.calls.append(("list", path))
+                if "/actions/runs" in path:
+                    return [
+                        {"conclusion": "success", "commit_message": "private-commit-message"},
+                        {"conclusion": "failure", "pull_request_body": "private-pr-body"},
+                    ], False
+                if "/pulls" in path:
+                    return [{"title": "private-pr-title", "body": "private-pr-body"}], False
+                return [], False
+
+        report = collect_report(DetailedClient(), "owner/repo", "repo_ci")
+        serialized = str(report)
+        self.assertEqual(report["summary"]["default_branch"], "main")
+        self.assertEqual(report["summary"]["open_pull_requests"], 1)
+        self.assertEqual(report["summary"]["workflow_runs_observed"], 2)
+        self.assertEqual(report["summary"]["workflow_failures_observed"], 1)
+        self.assertNotIn("private_metadata", serialized)
+        self.assertNotIn("private-commit-message", serialized)
+        self.assertNotIn("private-pr-body", serialized)
+        self.assertNotIn("private-pr-title", serialized)
+        self.assertNotIn("items", report["endpoints"]["workflow_runs"])
+        self.assertNotIn("data", report["endpoints"]["repository"])
+
     def test_security_alert_payloads_are_not_persisted(self):
         """Keep alert counts but exclude vulnerability details from reports."""
         class AlertClient(FakeClient):
