@@ -91,9 +91,12 @@ class ReportTests(unittest.TestCase):
             ([{"id": 2}], None),
         ]
         calls = []
+
         def fake_request(url):
+            """Record each page request and return its queued response."""
             calls.append(url)
             return responses.pop(0)
+
         client._request = fake_request
         items, truncated = client.list("/repos/owner/repo/pulls?per_page=100")
         self.assertEqual([item["id"] for item in items], [1, 2])
@@ -104,10 +107,13 @@ class ReportTests(unittest.TestCase):
         """Stop after MAX_PAGES and report that more pages remain."""
         client = GitHubClient("test-token")
         calls = []
+
         def fake_request(url):
+            """Return a page that advertises another page."""
             calls.append(url)
             page = len(calls)
             return ([{"id": page}], f'<https://api.github.com/repos/owner/repo/pulls?page={page + 1}>; rel="next"')
+
         client._request = fake_request
         items, truncated = client.list("/repos/owner/repo/pulls?per_page=100")
         self.assertEqual(len(items), MAX_PAGES)
@@ -131,13 +137,21 @@ class ReportTests(unittest.TestCase):
     def test_invalid_utf8_response_is_classified(self):
         """Convert invalid UTF-8 API response bodies into AuditError."""
         class FakeResponse:
+            """Provide a context-managed response with invalid UTF-8 bytes."""
+
             headers = {}
+
             def __enter__(self):
+                """Return this response from the context manager."""
                 return self
+
             def __exit__(self, *args):
+                """Allow the mocked response context to close normally."""
                 return False
+
             def read(self, limit):
-                return b"\xff"
+                """Return bytes that cannot be decoded as UTF-8."""
+                return b"\\xff"
 
         client = GitHubClient("test-token")
         with patch("dorker_daily_audit.urllib.request.urlopen", return_value=FakeResponse()):
@@ -147,12 +161,20 @@ class ReportTests(unittest.TestCase):
     def test_interrupted_response_read_is_classified(self):
         """Convert interrupted HTTP response reads into AuditError."""
         class FakeResponse:
+            """Provide a context-managed response that fails during reading."""
+
             headers = {}
+
             def __enter__(self):
+                """Return this response from the context manager."""
                 return self
+
             def __exit__(self, *args):
+                """Allow the mocked response context to close normally."""
                 return False
+
             def read(self, limit):
+                """Simulate an interrupted HTTP response body."""
                 raise http.client.IncompleteRead(b"partial")
 
         client = GitHubClient("test-token")
@@ -163,7 +185,10 @@ class ReportTests(unittest.TestCase):
     def test_truncated_inventory_is_incomplete(self):
         """Propagate client pagination truncation into report completeness."""
         class TruncatedClient(FakeClient):
+            """Simulate a list endpoint that reaches its pagination limit."""
+
             def list(self, path):
+                """Return a truncated list and record the endpoint request."""
                 self.calls.append(("list", path))
                 return [], True
 
@@ -174,11 +199,15 @@ class ReportTests(unittest.TestCase):
     def test_repository_pr_and_workflow_payloads_are_not_persisted(self):
         """Persist only required summary fields, not full GitHub API objects."""
         class DetailedClient(FakeClient):
+            """Return private metadata to verify report data minimization."""
+
             def get(self, path):
+                """Return repository fields including a private sentinel."""
                 self.calls.append(("get", path))
                 return {"default_branch": "main", "private_metadata": "must-not-persist"}
 
             def list(self, path):
+                """Return detailed workflow and pull-request objects."""
                 self.calls.append(("list", path))
                 if "/actions/runs" in path:
                     return [
@@ -205,7 +234,10 @@ class ReportTests(unittest.TestCase):
     def test_security_alert_payloads_are_not_persisted(self):
         """Keep alert counts but exclude vulnerability details from reports."""
         class AlertClient(FakeClient):
+            """Return alert detail sentinels for data minimization checks."""
+
             def list(self, path):
+                """Provide alert payloads or defer to the base fake client."""
                 if "dependabot/alerts" in path:
                     return [{"secret_advisory_detail": "private-dependency-data"}], False
                 if "code-scanning/alerts" in path:
@@ -223,7 +255,10 @@ class ReportTests(unittest.TestCase):
     def test_missing_security_permission_is_incomplete_and_count_unknown(self):
         """Do not misreport inaccessible alert endpoints as zero alerts."""
         class RestrictedClient(FakeClient):
+            """Simulate a missing permission for one security inventory."""
+
             def list(self, path):
+                """Raise an authorization error for Dependabot alerts."""
                 if "dependabot/alerts" in path:
                     raise GitHubAPIError(403)
                 return super().list(path)
@@ -241,8 +276,8 @@ class ReportTests(unittest.TestCase):
             "summary": {"signal|injected": 1}, "endpoints": {"repository": {"status": "ok"}},
         }
         rendered = render_markdown(report)
-        self.assertIn(r"task \| injected", rendered)
-        self.assertIn(r"signal\|injected", rendered)
+        self.assertIn(r"task \\| injected", rendered)
+        self.assertIn(r"signal\\|injected", rendered)
 
 
 if __name__ == "__main__":
