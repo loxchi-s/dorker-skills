@@ -23,7 +23,7 @@ GitHub Actions scheduled events may be delayed, particularly during high load. T
 - repo_ci: repository metadata, recent workflow runs, and open pull requests.
 - security: open Dependabot and code-scanning alert counts; alert details are not persisted.
 - quality: recent workflow outcomes and open pull-request inventory.
-- pr_readiness: open pull-request inventory and merge-readiness metadata exposed by the REST list endpoint.
+- pr_readiness: open pull-request inventory only. It does not inspect mergeability, required checks, branch protection, conflicts, or provide a merge recommendation.
 - daily_summary: consolidated inventory across repository, CI, PR, and security endpoints.
 
 The auditor caps pagination at five pages per list endpoint. A truncated response or unavailable endpoint is reported as incomplete. Alert counts are null when their endpoint is unavailable; the report never silently interprets an inaccessible endpoint as zero alerts. A 403/404 on security endpoints is recorded as unavailable.
