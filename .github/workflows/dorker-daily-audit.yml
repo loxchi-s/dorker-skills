@@ -25,7 +25,6 @@ permissions:
   actions: read
   pull-requests: read
   security-events: read
-  vulnerability-alerts: read
 
 concurrency:
   group: dorker-daily-audit-${{ github.workflow }}-${{ github.event.schedule || inputs.slot || github.ref }}
@@ -45,9 +44,34 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+      - name: Check optional Dependabot App credentials
+        id: dependabot-app-config
+        env:
+          APP_ID: ${{ secrets.DORKER_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.DORKER_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$APP_ID" ] && [ -n "$APP_PRIVATE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create read-only Dependabot installation token
+        id: dependabot-app-token
+        if: steps.dependabot-app-config.outputs.configured == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ secrets.DORKER_APP_ID }}
+          private-key: ${{ secrets.DORKER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: dorker-skills
+          permission-metadata: read
+          permission-vulnerability-alerts: read
       - name: Run read-only audit
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          DEPENDABOT_GITHUB_TOKEN: ${{ steps.dependabot-app-token.outputs.token }}
+          DEPENDABOT_APP_CONFIGURED: ${{ steps.dependabot-app-config.outputs.configured }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           DORKER_SCHEDULE: ${{ github.event.schedule }}
           DORKER_SLOT: ${{ inputs.slot }}
