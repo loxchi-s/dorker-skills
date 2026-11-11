@@ -16,7 +16,7 @@ The auditor uses the workflow-provided GitHub token for authenticated GET reques
 | 18:00 | 0 11 * * * | pr_readiness |
 | 22:00 | 0 15 * * * | daily_summary |
 
-GitHub Actions scheduled events may be delayed, particularly during high load. These are target times, not a minute-level execution guarantee. The workflow routes scheduled events using the exact github.event.schedule expression; it does not infer the slot from actual start time. Manual dispatch requires an explicit slot.
+GitHub Actions scheduled events may be delayed, particularly during high load. These are target times, not a minute-level execution guarantee. The workflow routes scheduled events using the exact github.event.schedule expression; it does not infer the slot from actual start time. Manual dispatch requires an explicit slot. Scheduled jobs remain disabled until a repository Actions variable named `DORKER_AUTOMATION_ENABLED` is set to the string `true`; manual dispatch bypasses this gate for an owner-directed smoke test after the workflow exists on the default branch.
 
 ## Slot responsibilities
 
@@ -50,7 +50,7 @@ Each run is independent and read-only. The workflow does not claim exactly-once 
 - [ ] Dependabot and code-scanning response details are excluded from all persisted reports; counts remain available.
 - [ ] Inaccessible or truncated endpoints produce an incomplete report and do not imply zero alerts.
 - [ ] Unit tests, Python compilation, Agent Lab CI, CodeQL, and OSV checks pass on the final PR head.
-- [ ] A manual workflow dispatch completes and uploads both report artifacts before merge.
+- [ ] After merge, a manual workflow dispatch completes and uploads both report artifacts while scheduled execution remains gated.
 - [ ] No merge, deployment, repository write, or Supabase mutation is performed by this workflow.
 
 ## Validation
@@ -60,11 +60,11 @@ Run locally:
     python -m unittest discover -s tests -p 'test_dorker_daily_audit.py' -v
     python -m py_compile tools/dorker_daily_audit.py
 
-The first manual GitHub Actions dispatch is required to validate workflow trigger parsing, GITHUB_TOKEN permissions, security endpoint availability, and artifact upload. Scheduled execution is not considered operationally validated until the workflow is merged into the default branch and a scheduled run is observed.
+The first manual GitHub Actions dispatch after merge is required to validate workflow trigger parsing, GITHUB_TOKEN permissions, security endpoint availability, and artifact upload. The schedule remains disabled until an owner sets `DORKER_AUTOMATION_ENABLED=true` in repository Actions variables. Scheduled execution is not considered operationally validated until the owner enables the gate and a scheduled run is observed.
 
 ## Rollback
 
-1. Disable the Dorker Daily Audit workflow in GitHub Actions if scheduled runs cause unexpected load or API failures.
+1. Set the repository Actions variable `DORKER_AUTOMATION_ENABLED` to `false` (or remove it) to stop scheduled jobs; manual dispatch remains available for diagnosis.
 2. Revert this PR's changes to the workflow, audit worker, tests, CI integration, and documentation in a follow-up commit.
 3. Confirm that no report artifacts are being generated after the workflow is disabled.
 4. No database, Supabase, production deployment, or canonical dataset rollback is required because this workflow is read-only.
