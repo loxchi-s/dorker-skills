@@ -252,7 +252,13 @@ class ReportTests(unittest.TestCase):
                     return [{"secret_rule_detail": "private-code-location"}], False
                 return super().list(path)
 
-        report = collect_report(AlertClient(), "owner/repo", "security")
+        client = AlertClient()
+        report = collect_report(
+            client,
+            "owner/repo",
+            "security",
+            dependabot_client=client,
+        )
         self.assertEqual(report["summary"]["dependabot_alerts_open"], 1)
         self.assertEqual(report["summary"]["code_scanning_alerts_open"], 1)
         self.assertNotIn("items", report["endpoints"]["dependabot_alerts"])
@@ -287,12 +293,7 @@ class ReportTests(unittest.TestCase):
 
     def test_missing_dependabot_app_credentials_is_incomplete(self):
         """Keep Dependabot count unknown when App credentials are not configured."""
-        report = collect_report(
-            FakeClient(),
-            "owner/repo",
-            "security",
-            dependabot_token_configured=False,
-        )
+        report = collect_report(FakeClient(), "owner/repo", "security")
         endpoint = report["endpoints"]["dependabot_alerts"]
         self.assertFalse(report["complete"])
         self.assertEqual(endpoint["status"], "unavailable")
@@ -310,7 +311,13 @@ class ReportTests(unittest.TestCase):
                     raise GitHubAPIError(403)
                 return super().list(path)
 
-        report = collect_report(RestrictedClient(), "owner/repo", "security")
+        client = RestrictedClient()
+        report = collect_report(
+            client,
+            "owner/repo",
+            "security",
+            dependabot_client=client,
+        )
         self.assertFalse(report["complete"])
         self.assertEqual(report["endpoints"]["dependabot_alerts"]["status"], "unavailable")
         self.assertIsNone(report["summary"]["dependabot_alerts_open"])
