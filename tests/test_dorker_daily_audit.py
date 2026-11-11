@@ -11,6 +11,7 @@ from dorker_daily_audit import (
     GitHubClient,
     GitHubAPIError,
     SLOT_ENDPOINTS,
+    SLOT_DESCRIPTIONS,
     collect_report,
     render_markdown,
     resolve_slot,
@@ -74,6 +75,13 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report["complete"])
         self.assertEqual(set(report["endpoints"]), set(SLOT_ENDPOINTS["repo_ci"]))
         self.assertEqual(len(client.calls), 3)
+
+    def test_pr_readiness_is_inventory_only(self):
+        """Describe PR inventory without claiming merge-readiness validation."""
+        report = collect_report(FakeClient(), "owner/repo", "pr_readiness")
+        self.assertEqual(report["task"], SLOT_DESCRIPTIONS["pr_readiness"])
+        self.assertIn("no merge-readiness assessment", report["task"])
+        self.assertEqual(set(report["endpoints"]), {"repository", "pull_requests"})
 
     def test_workflow_runs_object_payload_is_supported(self):
         """Accept the object envelope used by GitHub Actions workflow runs."""
