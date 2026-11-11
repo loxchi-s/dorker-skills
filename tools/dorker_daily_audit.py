@@ -80,7 +80,7 @@ class GitHubClient:
                 return json.loads(raw.decode("utf-8")), response.headers.get("Link")
         except urllib.error.HTTPError as exc:
             raise GitHubAPIError(exc.code) from None
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise AuditError("GitHub API transport or response decoding failed") from exc
 
     def get(self, path: str) -> Any:
