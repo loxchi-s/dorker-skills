@@ -35,30 +35,37 @@ SLOT_ENDPOINTS = {
     "pr_readiness": ("repository", "pull_requests"),
     "daily_summary": ("repository", "workflow_runs", "pull_requests", "dependabot_alerts", "code_scanning_alerts"),
 }
+ALERT_ENDPOINTS = frozenset({"dependabot_alerts", "code_scanning_alerts"})
 API_ROOT = "https://api.github.com"
 MAX_PAGES = 5
+MAX_RESPONSE_BYTES = 2_000_000
 
 
 class AuditError(RuntimeError):
-    """Invalid audit configuration or unsafe API response."""
+    """Represent invalid audit configuration or an unsafe API response."""
 
 
 class GitHubAPIError(RuntimeError):
+    """Represent an HTTP error returned by the GitHub REST API."""
+
     def __init__(self, status: int) -> None:
+        """Initialize the exception with an HTTP status code."""
         super().__init__("GitHub API request failed")
         self.status = status
 
 
 class GitHubClient:
-    """Read-only REST client with bounded pagination and request timeouts."""
+    """Provide bounded, read-only GitHub REST API access."""
 
     def __init__(self, token: str, timeout: float = 20.0) -> None:
+        """Initialize the client with a token and per-request timeout."""
         if not token:
             raise AuditError("GITHUB_TOKEN is required")
         self._token = token
         self._timeout = timeout
 
     def _request(self, url: str) -> tuple[Any, str | None]:
+        """Issue one authenticated GET request to the GitHub API host."""
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme != "https" or parsed.netloc != "api.github.com":
             raise AuditError("Refusing to send credentials to an untrusted host")
@@ -74,8 +81,8 @@ class GitHubClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                raw = response.read(2_000_001)
-                if len(raw) > 2_000_000:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
                     raise AuditError("GitHub API response exceeded the 2 MB safety limit")
                 return json.loads(raw.decode("utf-8")), response.headers.get("Link")
         except urllib.error.HTTPError as exc:
@@ -83,11 +90,16 @@ class GitHubClient:
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise AuditError("GitHub API transport or response decoding failed") from exc
 
-    def get(self, path: str) -> Any:
-        return self._request(API_ROOT + path)[0]
+    def get(self, path: str) -> dict[str, Any]:
+        """Fetch an object response and reject unexpected JSON top-level types."""
+        payload = self._request(API_ROOT + path)[0]
+        if not isinstance(payload, dict):
+            raise AuditError("GitHub object endpoint returned an unsupported payload")
+        return payload
 
-    def list(self, path: str) -> tuple[list[Any], bool]:
-        items: list[Any] = []
+    def list(self, path: str) -> tuple[list[dict[str, Any]], bool]:
+        """Fetch a list endpoint with bounded pagination and item validation."""
+        items: list[dict[str, Any]] = []
         url = API_ROOT + path
         for _ in range(MAX_PAGES):
             payload, link_header = self._request(url)
@@ -98,6 +110,8 @@ class GitHubClient:
                 page_items = payload["workflow_runs"]
             else:
                 raise AuditError("GitHub list endpoint returned an unsupported payload")
+            if any(not isinstance(item, dict) for item in page_items):
+                raise AuditError("GitHub list endpoint contained a non-object item")
             items.extend(page_items)
             next_url = None
             if link_header:
@@ -113,6 +127,7 @@ class GitHubClient:
 
 
 def resolve_slot(schedule: str | None, dispatch_slot: str | None) -> str:
+    """Resolve a scheduled cron or validated manual input to an audit slot."""
     if dispatch_slot:
         if dispatch_slot not in SLOT_ENDPOINTS:
             raise AuditError("Unsupported workflow_dispatch slot")
@@ -124,6 +139,7 @@ def resolve_slot(schedule: str | None, dispatch_slot: str | None) -> str:
 
 
 def endpoint_path(repo: str, name: str) -> str:
+    """Build a fixed GitHub REST path for a supported endpoint."""
     encoded = urllib.parse.quote(repo, safe="/")
     paths = {
         "repository": "/repos/" + encoded,
@@ -136,8 +152,11 @@ def endpoint_path(repo: str, name: str) -> str:
 
 
 def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]:
+    """Collect an audit snapshot while excluding sensitive alert payloads."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise AuditError("GITHUB_REPOSITORY must use owner/repository format")
+    if slot not in SLOT_ENDPOINTS:
+        raise AuditError("Unsupported audit slot")
     report: dict[str, Any] = {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -155,9 +174,10 @@ def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]
                 report["endpoints"][name] = {"status": "ok", "data": client.get(endpoint_path(repo, name))}
             else:
                 items, truncated = client.list(endpoint_path(repo, name))
-                report["endpoints"][name] = {
-                    "status": "ok", "count": len(items), "items": items, "truncated": truncated,
-                }
+                entry = {"status": "ok", "count": len(items), "truncated": truncated}
+                if name not in ALERT_ENDPOINTS:
+                    entry["items"] = items
+                report["endpoints"][name] = entry
                 if truncated:
                     report["complete"] = False
         except GitHubAPIError as exc:
@@ -170,26 +190,30 @@ def collect_report(client: GitHubClient, repo: str, slot: str) -> dict[str, Any]
     repo_data = report["endpoints"].get("repository", {}).get("data", {})
     runs = report["endpoints"].get("workflow_runs", {}).get("items", [])
     prs = report["endpoints"].get("pull_requests", {}).get("items", [])
-    dependabot = report["endpoints"].get("dependabot_alerts", {}).get("items", [])
-    code_alerts = report["endpoints"].get("code_scanning_alerts", {}).get("items", [])
+    dependabot_entry = report["endpoints"].get("dependabot_alerts", {})
+    code_alerts_entry = report["endpoints"].get("code_scanning_alerts", {})
+    dependabot_count = dependabot_entry.get("count") if dependabot_entry.get("status") == "ok" else None
+    code_alerts_count = code_alerts_entry.get("count") if code_alerts_entry.get("status") == "ok" else None
     report["summary"] = {
-        "default_branch": repo_data.get("default_branch"),
+        "default_branch": repo_data.get("default_branch") if isinstance(repo_data, dict) else None,
         "open_pull_requests": len(prs),
         "workflow_runs_observed": len(runs),
         "workflow_failures_observed": sum(
             run.get("conclusion") in {"failure", "timed_out", "action_required"} for run in runs
         ),
-        "dependabot_alerts_open": len(dependabot),
-        "code_scanning_alerts_open": len(code_alerts),
+        "dependabot_alerts_open": dependabot_count,
+        "code_scanning_alerts_open": code_alerts_count,
     }
     return report
 
 
 def safe_cell(value: Any) -> str:
+    """Escape untrusted values before placing them in Markdown table cells."""
     return str(value if value is not None else "unknown").replace("|", r"\|").replace("\r", " ").replace("\n", " ")
 
 
 def render_markdown(report: dict[str, Any]) -> str:
+    """Render the summary and endpoint coverage without embedding API payloads."""
     summary = report["summary"]
     lines = [
         "# Dorker scheduled audit", "",
@@ -214,6 +238,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def main() -> int:
+    """Parse workflow inputs, write report artifacts, and return a process status."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--schedule", default=os.getenv("DORKER_SCHEDULE", ""))
     parser.add_argument("--slot", default=os.getenv("DORKER_SLOT", ""))
