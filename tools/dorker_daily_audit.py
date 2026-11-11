@@ -26,7 +26,7 @@ SLOT_DESCRIPTIONS = {
     "repo_ci": "Repository, open pull requests, and recent workflow health",
     "security": "Dependabot and code-scanning alert inventory",
     "quality": "Recent CI outcomes and open pull-request inventory",
-    "pr_readiness": "Open pull-request readiness signals",
+    "pr_readiness": "Open pull-request inventory; no merge-readiness assessment or merge recommendation",
     "daily_summary": "Daily consolidated repository, CI, PR, and security snapshot",
 }
 SLOT_ENDPOINTS = {
