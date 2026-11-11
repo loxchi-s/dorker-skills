@@ -28,7 +28,7 @@ permissions:
   vulnerability-alerts: read
 
 concurrency:
-  group: dorker-daily-audit-\${{ github.workflow }}-\${{ github.event.schedule || inputs.slot || github.ref }}
+  group: dorker-daily-audit-${{ github.workflow }}-${{ github.event.schedule || inputs.slot || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -48,16 +48,16 @@ jobs:
           cache: false
       - name: Run read-only audit
         env:
-          GITHUB_TOKEN: \${{ github.token }}
-          GITHUB_REPOSITORY: \${{ github.repository }}
-          DORKER_SCHEDULE: \${{ github.event.schedule }}
-          DORKER_SLOT: \${{ inputs.slot }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DORKER_SCHEDULE: ${{ github.event.schedule }}
+          DORKER_SLOT: ${{ inputs.slot }}
         run: python tools/dorker_daily_audit.py --output-dir reports
       - name: Upload audit reports
         if: always() && hashFiles('reports/*') != ''
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: dorker-audit-\${{ github.run_id }}-\${{ github.run_attempt }}
+          name: dorker-audit-${{ github.run_id }}-${{ github.run_attempt }}
           path: reports/
           if-no-files-found: error
           retention-days: 30
