@@ -1,3 +1,4 @@
+import http.client
 import sys
 import unittest
 from pathlib import Path
@@ -137,6 +138,22 @@ class ReportTests(unittest.TestCase):
                 return False
             def read(self, limit):
                 return b"\xff"
+
+        client = GitHubClient("test-token")
+        with patch("dorker_daily_audit.urllib.request.urlopen", return_value=FakeResponse()):
+            with self.assertRaises(AuditError):
+                client._request("https://api.github.com/repos/owner/repo")
+
+    def test_interrupted_response_read_is_classified(self):
+        """Convert interrupted HTTP response reads into AuditError."""
+        class FakeResponse:
+            headers = {}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                raise http.client.IncompleteRead(b"partial")
 
         client = GitHubClient("test-token")
         with patch("dorker_daily_audit.urllib.request.urlopen", return_value=FakeResponse()):
