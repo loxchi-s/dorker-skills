@@ -157,7 +157,6 @@ def collect_report(
     repo: str,
     slot: str,
     dependabot_client: GitHubClient | None = None,
-    dependabot_token_configured: bool = True,
     dependabot_unavailable_reason: str = "app_credentials_not_configured",
 ) -> dict[str, Any]:
     """Collect an audit snapshot while excluding sensitive alert payloads."""
@@ -191,7 +190,7 @@ def collect_report(
                 summary["default_branch"] = repository_data.get("default_branch")
                 report["endpoints"][name] = {"status": "ok"}
             else:
-                if name == "dependabot_alerts" and not dependabot_token_configured:
+                if name == "dependabot_alerts" and dependabot_client is None:
                     report["complete"] = False
                     report["endpoints"][name] = {
                         "status": "unavailable",
@@ -200,7 +199,7 @@ def collect_report(
                     continue
                 endpoint_client = (
                     dependabot_client
-                    if name == "dependabot_alerts" and dependabot_client is not None
+                    if name == "dependabot_alerts"
                     else client
                 )
                 items, truncated = endpoint_client.list(endpoint_path(repo, name))
@@ -285,7 +284,6 @@ def main() -> int:
             args.repository,
             slot,
             dependabot_client=dependabot_client,
-            dependabot_token_configured=dependabot_client is not None,
             dependabot_unavailable_reason=unavailable_reason,
         )
         output_dir = Path(args.output_dir)
