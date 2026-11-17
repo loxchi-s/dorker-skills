@@ -89,9 +89,23 @@ _SECRET_ASSIGNMENT = re.compile(
 
 def redact_secrets(value: str) -> str:
     """Redact common credentials before sending repository text to the model."""
+    def redact_pem_block(match: re.Match[str]) -> str:
+        # Preserve physical lines and diff markers so evidence coordinates stay stable.
+        lines = match.group(0).splitlines(keepends=True)
+        redacted: list[str] = []
+        for index, line in enumerate(lines):
+            newline = "\r\n" if line.endswith("\r\n") else (
+                "\n" if line.endswith("\n") else ("\r" if line.endswith("\r") else "")
+            )
+            body = line[:-len(newline)] if newline else line
+            marker = body[0] if body.startswith(("+", "-", " ")) else ""
+            replacement = "[REDACTED PRIVATE KEY]" if index == 0 else ""
+            redacted.append(marker + replacement + newline)
+        return "".join(redacted)
+
     value = re.sub(
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-        "[REDACTED PRIVATE KEY]",
+        redact_pem_block,
         value,
         flags=re.DOTALL,
     )
@@ -172,6 +186,7 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
     old_line = new_line = None
     consumed = 0
     continuation = False
+    in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
     for line in diff_text.splitlines(keepends=True):
         if consumed >= offset:
@@ -180,18 +195,23 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
             continuation = True
             break
         body = line.rstrip("\r\n")
-        match = hunk.match(body)
-        if match:
-            old_line, new_line = int(match.group(1)), int(match.group(2))
-        elif old_line is not None and new_line is not None and body:
-            marker = body[0]
-            if marker == "+" and not body.startswith("+++"):
-                new_line += 1
-            elif marker == "-" and not body.startswith("---"):
-                old_line += 1
-            elif marker == " ":
-                old_line += 1
-                new_line += 1
+        if body.startswith("diff --git "):
+            in_hunk = False
+            old_line = new_line = None
+        else:
+            match = hunk.match(body)
+            if match:
+                old_line, new_line = int(match.group(1)), int(match.group(2))
+                in_hunk = True
+            elif in_hunk and old_line is not None and new_line is not None and body:
+                marker = body[0]
+                if marker == "+":
+                    new_line += 1
+                elif marker == "-":
+                    old_line += 1
+                elif marker == " ":
+                    old_line += 1
+                    new_line += 1
         consumed += len(line)
     return old_line, new_line, continuation
 
@@ -372,19 +392,25 @@ def _changed_diff_lines(diff_context: str) -> list[tuple[str, int, str]]:
     """Map added lines to new-file coordinates and deleted lines to old-file coordinates."""
     changed: list[tuple[str, int, str]] = []
     old_line = new_line = None
+    in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
     for line in diff_context.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+            old_line = new_line = None
+            continue
         match = hunk.match(line)
         if match:
             old_line, new_line = int(match.group(1)), int(match.group(2))
+            in_hunk = True
             continue
-        if old_line is None or new_line is None or not line:
+        if not in_hunk or old_line is None or new_line is None or not line:
             continue
         marker, content = line[0], line[1:].strip()
-        if marker == "+" and not line.startswith("+++"):
+        if marker == "+":
             changed.append(("new", new_line, content))
             new_line += 1
-        elif marker == "-" and not line.startswith("---"):
+        elif marker == "-":
             changed.append(("old", old_line, content))
             old_line += 1
         elif marker == " ":
@@ -431,7 +457,7 @@ def validate_review_output(
         r"^[ \t]*(?:[-*][ \t]*)?(Severity|File|Evidence|Impact|Fix)[ \t]*:[ \t]*(.*?)[ \t]*$",
         re.IGNORECASE,
     )
-    file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\d+(?:-\d+)?$", re.IGNORECASE)
+    file_line_pattern = re.compile(r"^.+(?::|,\s*line\s+)\d+(?:-\d+)?$", re.IGNORECASE)
     blocks: list[list[str]] = []
     current: list[str] = []
     seen_fields: set[str] = set()
@@ -469,7 +495,7 @@ def validate_review_output(
             file_reference = file_reference[1:-1]
         if file_line_pattern.fullmatch(file_reference) is None:
             return False
-        match = re.fullmatch(r"(.+?)(?::|,\s*line\s+)(\d+)(?:-(\d+))?", file_reference, re.IGNORECASE)
+        match = re.fullmatch(r"(.+)(?::|,\s*line\s+)(\d+)(?:-(\d+))?", file_reference, re.IGNORECASE)
         if match is None:
             return False
         cited_path = match.group(1)
@@ -594,10 +620,11 @@ def _extract_review_section(review: str, heading: str) -> str:
     content: list[str] = []
     for line in lines:
         normalized = line.strip().lstrip("#").strip().rstrip(":").strip()
-        if normalized in headings:
+        normalized_key = normalized.casefold()
+        if normalized_key in {item.casefold() for item in headings}:
             if collecting:
                 break
-            collecting = normalized == heading
+            collecting = normalized_key == heading.casefold()
             continue
         if collecting:
             content.append(line)
