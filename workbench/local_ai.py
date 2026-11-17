@@ -163,7 +163,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
 
         # Reserve room for the longest segment label and the actual path.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/999\\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/999\n".encode("utf-8")
         )
         segment_budget = MAX_CONTEXT_BYTES - label_budget
         if segment_budget <= 0:
@@ -175,7 +175,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
         file_incomplete = False
 
         for segment_index, segment in enumerate(raw_segments, start=1):
-            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
+            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
             chunk_text = label + segment
             chunk_bytes = len(chunk_text.encode("utf-8"))
             separator_bytes = 2 if chunks or file_chunks else 0
@@ -204,7 +204,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
     if not chunks:
         chunks.append(ContextChunk(path="(diff)", text="No diff content fit within the configured review bounds.", truncated=True))
 
-    combined_text = "\\n\\n".join(chunk.text for chunk in chunks)
+    combined_text = "\n\n".join(chunk.text for chunk in chunks)
     truncated = omitted_files > 0 or any(chunk.truncated for chunk in chunks)
     return ContextResult(
         text=combined_text,
