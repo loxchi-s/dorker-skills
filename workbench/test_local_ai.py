@@ -113,6 +113,28 @@ Add a mocked response-close test.
 """
         self.assertTrue(validate_review_output(review))
 
+    def test_accepts_finding_with_exact_changed_line_and_matching_path(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence: +with urllib.request.urlopen(request) as response:
+- Impact: Repeated requests may exhaust resources.
+- Fix: Close the response stream.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a response-close test.
+"""
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\n+with urllib.request.urlopen(request) as response:"
+        self.assertTrue(validate_review_output(
+            review, diff_context=diff, expected_path="workbench/local_ai.py"
+        ))
+
     def test_rejects_finding_without_exact_changed_line_evidence(self):
         review = """## Verdict
 REVIEW_REQUIRED
