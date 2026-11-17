@@ -25,7 +25,7 @@ class RedactionTests(unittest.TestCase):
         self.assertIn("[REDACTED", redact_secrets(value))
 
     def test_fine_grained_github_pat_in_bearer_header_is_redacted(self):
-        token = "github_pat_" + "A" *  forty
+        token = "github_pat_" + "A" * 40
         value = f"Authorization: Bearer {token}"
         redacted = redact_secrets(value)
         self.assertNotIn(token, redacted)
@@ -220,6 +220,14 @@ class ContextBoundsTests(unittest.TestCase):
 
     def test_collect_context_returns_text(self):
         self.assertIsInstance(collect_context().text, str)
+
+    @patch("local_ai._git_output")
+    def test_collect_context_redacts_bearer_github_pat(self, git_output):
+        token = "github_pat_" + "B" * 40
+        git_output.return_value = f"Authorization: Bearer {token}"
+        context = collect_context("main")
+        self.assertNotIn(token, context.text)
+        self.assertIn("[REDACTED GITHUB TOKEN]", context.text)
 
     @patch("local_ai._git_output")
     def test_collect_context_enforces_utf8_byte_limit(self, git_output):
