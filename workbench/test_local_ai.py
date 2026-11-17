@@ -174,6 +174,49 @@ Add regression test
 """
         self.assertFalse(validate_review_output(review))
 
+    def test_accepts_finding_fields_in_different_order(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- File: workbench/local_ai.py:42
+- Severity: High
+- Evidence: A concrete defect exists on this changed line.
+- Impact: The review result may be incorrect.
+- Fix: Correct the affected branch.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a regression test.
+"""
+        self.assertTrue(validate_review_output(review))
+
+    def test_splits_findings_when_a_field_repeats(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- File: workbench/local_ai.py:42
+- Severity: High
+- Evidence: First concrete defect.
+- Impact: First impact.
+- Fix: First fix.
+- Severity: Medium
+- File: workbench/test_local_ai.py:10
+- Evidence: Second concrete defect.
+- Impact: Second impact.
+- Fix: Second fix.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add regression tests.
+"""
+        self.assertTrue(validate_review_output(review))
+
     def test_accepts_no_actionable_findings_with_required_sections(self):
         review = """## Verdict
 NO_ACTIONABLE_FINDINGS
@@ -223,6 +266,13 @@ class ModelResponseStatusTests(unittest.TestCase):
 class ContextBoundsTests(unittest.TestCase):
     def test_context_limit_is_fixed(self):
         self.assertEqual(6_000, MAX_CONTEXT_BYTES)
+
+    @patch("local_ai._git_output")
+    def test_manual_review_uses_first_parent_diff_for_merge_commit(self, git_output):
+        git_output.return_value = "diff --git a/a.py b/a.py\\n+change"
+        collect_context()
+        args = git_output.call_args.args[0]
+        self.assertIn("--diff-merges=first-parent", args)
 
     def test_collect_context_returns_text(self):
         self.assertIsInstance(collect_context().text, str)
