@@ -113,7 +113,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
         )
     else:
         raw = _git_output(
-            ["show", "--format=fuller", "--stat", "--patch", "--no-ext-diff", "HEAD"]
+            ["show", "--diff-merges=first-parent", "--format=fuller", "--stat", "--patch", "--no-ext-diff", "HEAD"]
         )
     if not raw.strip():
         raw = "No textual diff found. Review request and repository metadata only."
@@ -259,15 +259,19 @@ def validate_review_output(review: str) -> bool:
     file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\d+$", re.IGNORECASE)
     blocks: list[list[str]] = []
     current: list[str] = []
+    seen_fields: set[str] = set()
     for line in findings.splitlines():
         starts_heading = re.match(r"^[ \t]*#{3,6}[ \t]+", line) is not None
-        starts_finding = re.match(
-            r"^[ \t]*(?:[-*][ \t]*)?Severity[ \t]*:", line, re.IGNORECASE
-        ) is not None
-        if current and (starts_heading or starts_finding):
+        field_match = field_pattern.match(line)
+        field_name = field_match.group(1).title() if field_match else None
+        starts_new_finding = field_name is not None and field_name in seen_fields
+        if current and (starts_heading or starts_new_finding):
             blocks.append(current)
             current = []
+            seen_fields = set()
         current.append(line)
+        if field_name is not None:
+            seen_fields.add(field_name)
     if current:
         blocks.append(current)
 
