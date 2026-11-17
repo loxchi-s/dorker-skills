@@ -57,8 +57,12 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - Ollama container: capped at 2 CPU cores, 4 GiB RAM, and 256 processes.
 - Model: qwen2.5:1.5b; model weights are downloaded on each fresh runner unless a cache is
   added later. No GPU is requested.
-- Job timeout: 25 minutes; Git diff context: at most 6,000 UTF-8 bytes (a conservative byte cap,
-  not a tokenizer guarantee); generation context: 4,096 tokens; output: at most 768 tokens.
+- Job timeout: 25 minutes; model review is split into per-file diff chunks, capped at 6,000
+  UTF-8 bytes per file, 24,000 UTF-8 bytes total, and 8 changed files. The review inference phase
+  has a 12-minute total budget and each model request has a maximum 120-second timeout.
+  Byte limits are conservative bounds, not tokenizer guarantees. Each chunk uses a 4,096-token
+  context window and at most 768 output tokens. Any truncated, skipped, timed-out, or invalid
+  chunk forces the aggregate report verdict to INCOMPLETE.
 - Reports include Ollama's `prompt_eval_count`, `eval_count`, and `done_reason`. The report is
   marked `INCOMPLETE` when completion metadata is missing, generation stops with
   `done_reason=length`, the prompt plus output budget reaches the context limit, or the model
@@ -99,5 +103,6 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
   reusable workflow contract, and unit tests.
 - The in-repository GitHub Actions path has successful evidence on the current PR head.
 - Not yet validated: external reusable-workflow invocation from the football repository,
-  cold model download time, and model quality.
+  cold model download time, and model quality. Per-file chunking has unit-test coverage, but its
+  end-to-end multi-file inference behavior still requires a fresh GitHub Actions run.
 - Not a coding agent: it reviews diffs but does not edit source code or open pull requests.
