@@ -28,6 +28,7 @@ from local_ai import (
     review_context_chunks,
     validate_review_output,
     _diff_position_at_offset,
+    _diff_position_and_marker_at_offset,
     _changed_diff_lines,
     _decode_git_path,
     _split_utf8_text,
