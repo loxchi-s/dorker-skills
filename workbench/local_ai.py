@@ -119,7 +119,7 @@ def validate_review_output(review: str) -> bool:
     """Return True only when model output follows the minimum review contract."""
     heading_matches = {
         name: re.search(
-            rf"(?im)^\\s*(?:#{{1,6}}\\s*)?{re.escape(name)}\\s*:?\\s*$",
+            rf"(?im)^\s*(?:#{{1,6}}\s*)?{re.escape(name)}\s*:?\s*$",
             review,
         )
         for name in _REQUIRED_REVIEW_SECTIONS
@@ -128,8 +128,8 @@ def validate_review_output(review: str) -> bool:
         return False
 
     verdict_match = re.search(
-        r"(?im)^\\s*(?:#{{1,6}}\\s*)?Verdict\\s*:?\\s*\\n\\s*"
-        r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\\b",
+        r"(?im)^\s*(?:#{{1,6}}\s*)?Verdict\s*:?\s*\n\s*"
+        r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\b",
         review,
     )
     if verdict_match is None or verdict_match.group(1) not in _VALID_VERDICTS:
@@ -147,12 +147,12 @@ def validate_review_output(review: str) -> bool:
 
     required_fields = ("Severity", "File", "Evidence", "Impact", "Fix")
     if any(
-        re.search(rf"(?im)^\\s*(?:[-*]\\s*)?{field}\\s*:", findings) is None
+        re.search(rf"(?im)^\s*(?:[-*]\s*)?{field}\s*:", findings) is None
         for field in required_fields
     ):
         return False
     return re.search(
-        r"(?im)^\\s*(?:[-*]\\s*)?File\\s*:\\s*[^\\s]+\\s*(?::|,\\s*line\\s+)\\s*\\d+",
+        r"(?im)^\s*(?:[-*]\s*)?File\s*:\s*[^\s]+\s*(?::|,\s*line\s+)\s*\d+",
         findings,
     ) is not None
 
@@ -160,18 +160,18 @@ def validate_review_output(review: str) -> bool:
 def incomplete_review_report(review: str) -> str:
     """Preserve raw model output while clearly rejecting an invalid review."""
     return (
-        "## Verdict\\nINCOMPLETE\\n\\n"
-        "## Findings\\n"
+        "## Verdict\nINCOMPLETE\n\n"
+        "## Findings\n"
         "The model response did not satisfy the required evidence-based review contract. "
-        "Do not treat this output as a completed code review.\\n\\n"
-        "## Risks and Unknowns\\n"
+        "Do not treat this output as a completed code review.\n\n"
+        "## Risks and Unknowns\n"
         "The model output was generic or structurally incomplete; no actionable findings "
-        "were accepted by the deterministic report validator.\\n\\n"
-        "## Tests Needed\\n"
+        "were accepted by the deterministic report validator.\n\n"
+        "## Tests Needed\n"
         "Re-run with a model/configuration that can follow the review contract, then "
-        "manually verify any reported finding against the diff.\\n\\n"
-        "## Raw Model Output\\n\\n"
-        f"{review}\\n"
+        "manually verify any reported finding against the diff.\n\n"
+        "## Raw Model Output\n\n"
+        f"{review}\n"
     )
 
 
