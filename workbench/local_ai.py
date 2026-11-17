@@ -144,9 +144,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
         chunks.append(ContextChunk(path=file_path, text=chunk_text, truncated=was_truncated))
         remaining_bytes -= len(chunk_text.encode("utf-8"))
 
-        if was_truncated:
-            omitted_files = len(file_diffs) - index - 1
-            break
+        # Continue to later files; this chunk is incomplete, but later files may still fit the total budget.
 
     if not chunks:
         chunks.append(ContextChunk(path="(diff)", text="", truncated=True))
@@ -357,7 +355,7 @@ def review_context_chunks(
                 f"File diff for {chunk.path} exceeded the per-file or total context "
                 "budget and was truncated."
             )
-            reason = f"{reason} {truncation_reason}".strip()
+            reason = " ".join(part for part in (reason, truncation_reason) if part)
         verdict = _review_verdict(model_result.text)
         if reason or not validate_review_output(model_result.text) or verdict == "INCOMPLETE":
             if not reason:
