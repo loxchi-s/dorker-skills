@@ -302,6 +302,153 @@ def incomplete_review_report(review: str, reason: str) -> str:
     )
 
 
+def _review_verdict(review: str) -> str | None:
+    match = re.search(
+        r"(?im)^\\s*(?:#{1,6}\\s*)?Verdict\\s*:?\\s*\\n\\s*"
+        r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\\b",
+        review,
+    )
+    return match.group(1) if match else None
+
+
+def review_context_chunks(
+    chunks: tuple[ContextChunk, ...],
+    model: str,
+    prompt: str,
+) -> tuple[ChunkReview, ...]:
+    results: list[ChunkReview] = []
+    deadline = time.monotonic() + MAX_REVIEW_SECONDS
+
+    for index, chunk in enumerate(chunks):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            results.extend(
+                ChunkReview(
+                    path=pending.path,
+                    status="INCOMPLETE",
+                    text="",
+                    reason="The total model-review time budget was exhausted before this file was reviewed.",
+                    model_response=None,
+                )
+                for pending in chunks[index:]
+            )
+            break
+
+        chunk_prompt = prompt
+        if chunk.truncated:
+            chunk_prompt += (
+                "\\nThis file diff was truncated. Do not return NO_ACTIONABLE_FINDINGS; "
+                "return INCOMPLETE and explain the missing coverage."
+            )
+        try:
+            model_result = ask_model(
+                model,
+                chunk_prompt,
+                chunk.text,
+                timeout_seconds=min(120.0, remaining),
+            )
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            results.append(
+                ChunkReview(
+                    path=chunk.path,
+                    status="INCOMPLETE",
+                    text="",
+                    reason=f"Model request failed: {exc}",
+                    model_response=None,
+                )
+            )
+            continue
+
+        reason = model_response_incomplete_reason(model_result)
+        if chunk.truncated:
+            reason = (
+                f"{reason} File diff for {chunk.path} exceeded the per-file or total context "
+                "budget and was truncated."
+            ).strip()
+        verdict = _review_verdict(model_result.text)
+        if reason or not validate_review_output(model_result.text) or verdict == "INCOMPLETE":
+            if not reason:
+                reason = (
+                    "The model explicitly returned INCOMPLETE."
+                    if verdict == "INCOMPLETE"
+                    else "The model response did not satisfy the evidence-based review contract."
+                )
+            results.append(
+                ChunkReview(
+                    path=chunk.path,
+                    status="INCOMPLETE",
+                    text=model_result.text[:MAX_RAW_OUTPUT_CHARS],
+                    reason=reason,
+                    model_response=model_result,
+                )
+            )
+        else:
+            results.append(
+                ChunkReview(
+                    path=chunk.path,
+                    status=verdict or "INCOMPLETE",
+                    text=model_result.text,
+                    reason=None,
+                    model_response=model_result,
+                )
+            )
+    return tuple(results)
+
+
+def build_aggregate_report(
+    reviews: tuple[ChunkReview, ...],
+    omitted_files: int,
+) -> str:
+    incomplete = omitted_files > 0 or any(item.status == "INCOMPLETE" for item in reviews)
+    has_findings = any(item.status == "REVIEW_REQUIRED" for item in reviews)
+    verdict = "INCOMPLETE" if incomplete else (
+        "REVIEW_REQUIRED" if has_findings else "NO_ACTIONABLE_FINDINGS"
+    )
+
+    sections = ["## Verdict", verdict, "", "## Findings"]
+    for item in reviews:
+        sections.extend(["", f"### File: {item.path}"])
+        if item.status == "REVIEW_REQUIRED":
+            findings_match = re.search(
+                r"(?ims)^\\s*#{1,6}\\s*Findings\\s*:?\\s*\\n(.*?)(?=^\\s*#{1,6}\\s*(?:Risks and Unknowns|Tests Needed)\\s*:?\\s*$)",
+                item.text,
+            )
+            sections.append(
+                findings_match.group(1).strip()
+                if findings_match
+                else "Validated actionable findings were returned."
+            )
+        elif item.status == "NO_ACTIONABLE_FINDINGS":
+            sections.append("No actionable findings were identified for this file.")
+        else:
+            sections.append(f"Review incomplete: {item.reason or 'No complete response was produced.'}")
+            if item.text:
+                sections.extend(["", "Raw model output:", item.text])
+
+    if omitted_files:
+        sections.extend(["", f"{omitted_files} additional file(s) were not reviewed due to configured bounds."])
+
+    sections.extend(["", "## Risks and Unknowns"])
+    if incomplete:
+        sections.append(
+            "The review did not cover every changed file completely or one or more model responses "
+            "failed the completion/evidence contract."
+        )
+    else:
+        sections.append(
+            "All selected file chunks completed the model response contract; findings still require human verification."
+        )
+
+    sections.extend(["", "## Tests Needed"])
+    if incomplete:
+        sections.append(
+            "Split the remaining large changes into smaller pull requests or raise bounded limits deliberately, then rerun the review."
+        )
+    else:
+        sections.append("Manually verify each reported finding and run the repository's relevant tests.")
+    return "\\n".join(sections)
+
+
 def main() -> int:
     prompt = os.environ.get(
         "LOCAL_AI_PROMPT",
