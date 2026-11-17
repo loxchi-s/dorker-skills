@@ -65,7 +65,7 @@ def redact_secrets(value: str) -> str:
         value,
         flags=re.DOTALL,
     )
-    value = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]", value)
+    value = re.sub(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]", value)
     value = re.sub(r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]", value)
     return _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
 
