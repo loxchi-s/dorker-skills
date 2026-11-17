@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$IMPLEMENTATION_REF" ]]; then
+            # Reusable workflows receive the caller's event name, so input presence is the discriminator.
             # Direct workflow_dispatch and pull_request runs use the checked-out revision,
             # including runs initiated from forks.
             echo "WORKBENCH_DIR=$GITHUB_WORKSPACE/workbench" >> "$GITHUB_ENV"
