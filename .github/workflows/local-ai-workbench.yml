@@ -84,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           # Pin the linux/amd64 manifest digest; do not rely on a mutable tag.
-docker run -d --name local-ollama --cpus=2 --memory=4g --pids-limit=256 -p 127.0.0.1:11434:11434 ollama/ollama@sha256:6697852aa235e8fb4e1e77cfab9bbf70d51d3760cb0d266e9fb43cf2b8e44f66
+          docker run -d --name local-ollama --cpus=2 --memory=4g --pids-limit=256 -p 127.0.0.1:11434:11434 ollama/ollama@sha256:6697852aa235e8fb4e1e77cfab9bbf70d51d3760cb0d266e9fb43cf2b8e44f66
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:11434/api/tags >/dev/null; then
               break
