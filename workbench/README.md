@@ -58,12 +58,16 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - Model: qwen2.5:1.5b; model weights are downloaded on each fresh runner unless a cache is
   added later. No GPU is requested.
 - Job timeout: 25 minutes; model review is split into diff chunks capped at 6,000 UTF-8
-  bytes per chunk and 48,000 UTF-8 bytes total. A single changed file can span multiple chunks;
-  at most 8 changed files and 8 review chunks are processed. The review inference phase
-  has a 12-minute total budget and each model request has a maximum 120-second timeout.
-  Byte limits are conservative bounds, not tokenizer guarantees. Each chunk uses a 4,096-token
-  context window and at most 768 output tokens. Any truncated, skipped, timed-out, or invalid
-  chunk forces the aggregate report verdict to INCOMPLETE.
+  bytes per chunk and 96,000 UTF-8 bytes total. A single changed file can span multiple chunks;
+  at most 16 changed files and 16 review chunks are processed. The review inference phase
+  has a 14-minute total budget and each model request has a maximum 120-second timeout.
+  Each request uses an 8,192-token context window and reserves up to 1,536 output tokens.
+  The input ceiling is 90% of the configured context window, further reduced when necessary
+  to preserve the output reserve. A conservative UTF-8 byte upper-bound estimator plus a
+  128-token framing reserve rejects oversized requests before inference; this is not an exact
+  model tokenizer. Actual \`prompt_eval_count\` and \`done_reason\` are checked after inference.
+  Any truncated, skipped, timed-out, oversized, output-limited, or invalid chunk forces the
+  aggregate report verdict to INCOMPLETE.
 - Reports include Ollama's `prompt_eval_count`, `eval_count`, and `done_reason`. The report is
   marked `INCOMPLETE` when completion metadata is missing, generation stops with
   `done_reason=length`, the prompt plus output budget reaches the context limit, or the model
@@ -92,8 +96,8 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - **Durability and cleanup:** reports are uploaded with a run-specific name and seven-day
   retention. The Ollama container is removed in an always-run cleanup step. Runner-local state
   is otherwise disposable; no result is written back to the caller repository.
-- **Resource bounds:** at most 8 changed files, 8 review chunks, 6,000 UTF-8 bytes per chunk, 48,000 bytes total,
-  12 minutes of inference time, and 120 seconds per model request. The GitHub job timeout is
+- **Resource bounds:** at most 16 changed files, 16 review chunks, 6,000 UTF-8 bytes per chunk, 96,000 bytes total,
+  14 minutes of inference time, and 120 seconds per model request. The GitHub job timeout is
   25 minutes. Exceeding a review bound is reported as incomplete, not silently treated as a
   complete review.
 
@@ -127,8 +131,12 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 
 - Implemented in this branch: workflow, bounded local inference client, report artifact,
   reusable workflow contract, and unit tests.
-- The in-repository GitHub Actions path has successful evidence on the current PR head.
+- Unit tests, Dorker Agent Lab CI, CodeQL, and OSV-Scanner passed on commit
+  cf10e876. Its Local AI Workbench job completed, but the report was INCOMPLETE: two files
+  were omitted by the 8-file/8-chunk bounds, two requests were rejected by preflight sizing,
+  and some model outputs were truncated or failed evidence validation.
+- The expanded 16-file/16-chunk bounds, larger output reserve, and stricter streaming segmenter
+  are implemented after cf10e876 and require a fresh full GitHub Actions run.
 - Not yet validated: external reusable-workflow invocation from the football repository,
-  cold model download time, and model quality. Per-file chunking has unit-test coverage, but its
-  end-to-end multi-file inference behavior still requires a fresh GitHub Actions run.
+  cold model download time, and model quality. Model findings remain advisory and low-confidence.
 - Not a coding agent: it reviews diffs but does not edit source code or open pull requests.
