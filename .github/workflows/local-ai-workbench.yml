@@ -100,6 +100,7 @@ jobs:
           LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
           GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python "$WORKBENCH_DIR/local_ai.py"
 
       - name: Upload review report
