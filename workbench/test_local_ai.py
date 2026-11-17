@@ -63,6 +63,34 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual("{'client_secret': [REDACTED]}", redact_secrets(value))
 
 
+    def test_common_credential_assignments_are_redacted(self):
+        secrets = {
+            "SECRET_KEY": "secret-value",
+            "AWS_SECRET_ACCESS_KEY": "aws-secret-value",
+            "auth_token": "auth-token-value",
+            "token": "plain-token-value",
+            "private_key": "private-key-value",
+            "AWS_ACCESS_KEY_ID": "AKIA1234567890ABCDEF",
+            "client_secret": "client-secret-value",
+        }
+        for name, secret in secrets.items():
+            with self.subTest(name=name):
+                redacted = redact_secrets(f"{name}={secret}")
+                self.assertNotIn(secret, redacted)
+                self.assertIn("[REDACTED", redacted)
+
+    def test_authorization_bearer_and_basic_credentials_are_redacted(self):
+        for scheme in ("Bearer", "Basic"):
+            with self.subTest(scheme=scheme):
+                credential = "QWxhZGRpbjpvcGVuIHNlc2FtZQ"
+                redacted = redact_secrets(f"Authorization: {scheme} {credential}")
+                self.assertNotIn(credential, redacted)
+                self.assertIn(f"{scheme} [REDACTED]", redacted)
+
+    def test_non_secret_max_tokens_setting_is_not_redacted(self):
+        self.assertEqual("max_tokens=4096", redact_secrets("max_tokens=4096"))
+
+
 class ModelPromptTests(unittest.TestCase):
     @patch("local_ai.urllib.request.urlopen")
     def test_model_request_uses_evidence_based_review_contract(self, urlopen):
@@ -176,6 +204,51 @@ Add a response-close test.
 """
         diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\n+with urllib.request.urlopen(request) as response:"
         self.assertFalse(validate_review_output(
+            review, diff_context=diff, expected_path="workbench/local_ai.py"
+        ))
+
+
+    def test_rejects_short_changed_line_as_evidence(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: Medium
+- File: workbench/local_ai.py:42
+- Evidence: Missing check (see line 42)
+- Impact: A weak evidence match could validate an unsupported finding.
+- Fix: Require a sufficiently long changed line as evidence.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a short-line evidence regression test.
+"""
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n@@ -41,0 +42,1 @@\\n+)\\n"
+        self.assertFalse(validate_review_output(
+            review, diff_context=diff, expected_path="workbench/local_ai.py"
+        ))
+
+    def test_accepts_plus_prefixed_long_changed_line_as_evidence(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: Medium
+- File: workbench/local_ai.py:42
+- Evidence: +with urllib.request.urlopen(request) as response:
+- Impact: Repeated requests may exhaust resources.
+- Fix: Close the response stream.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a response-close test.
+"""
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n@@ -41,0 +42,1 @@\\n+with urllib.request.urlopen(request) as response:\\n"
+        self.assertTrue(validate_review_output(
             review, diff_context=diff, expected_path="workbench/local_ai.py"
         ))
 
