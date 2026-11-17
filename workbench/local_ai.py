@@ -467,26 +467,23 @@ def main() -> int:
 
     try:
         context_result = collect_context(base_ref)
-        review_prompt = prompt
-        if context_result.truncated:
-            review_prompt += (
-                "\nThe supplied diff context was truncated at the configured byte limit. "
-                "You did not receive the complete diff. Do not return NO_ACTIONABLE_FINDINGS; "
-                "report the review as INCOMPLETE and identify this coverage limitation."
-            )
-        model_result = ask_model(model, review_prompt, context_result.text)
-        review = model_result.text
-        incomplete_reason = model_response_incomplete_reason(model_result)
-        if context_result.truncated:
-            truncation_reason = (
-                f"Diff context exceeded {MAX_CONTEXT_BYTES} UTF-8 bytes and was truncated; "
-                "the model did not receive the complete diff."
-            )
-            incomplete_reason = f"{incomplete_reason} {truncation_reason}".strip()
-        if incomplete_reason or not validate_review_output(review):
-            if not incomplete_reason:
-                incomplete_reason = "The model response did not satisfy the evidence-based review contract."
-            review = incomplete_review_report(review, incomplete_reason)
+        chunk_reviews = review_context_chunks(context_result.chunks, model, prompt)
+        review = build_aggregate_report(chunk_reviews, context_result.omitted_files)
+        prompt_tokens = [
+            item.model_response.prompt_eval_count
+            for item in chunk_reviews
+            if item.model_response and item.model_response.prompt_eval_count is not None
+        ]
+        output_tokens = [
+            item.model_response.eval_count
+            for item in chunk_reviews
+            if item.model_response and item.model_response.eval_count is not None
+        ]
+        stop_reasons = sorted({
+            item.model_response.done_reason
+            for item in chunk_reviews
+            if item.model_response and item.model_response.done_reason
+        })
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -494,18 +491,24 @@ def main() -> int:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         "# Local AI Review\n\n"
-        f"- Model: `{model}` (local Ollama, CPU)\n"
-        f"- Event: `{os.environ.get('GITHUB_EVENT_NAME', 'local')}`\n"
-        f"- Workflow commit: `{os.environ.get('GITHUB_SHA', 'unknown')}`\n"
-        f"- PR head commit: `{os.environ.get('GITHUB_PR_HEAD_SHA', 'unknown')}`\n"
-        f"- Context bytes: `{len(context_result.text.encode('utf-8'))}`\n"
-        f"- Context truncated: `{str(context_result.truncated).lower()}`\n"
-        f"- Context window: `{NUM_CTX}` tokens\n"
-        f"- Output token budget: `{NUM_PREDICT}` tokens\n"
-        f"- Prompt tokens evaluated: `{model_result.prompt_eval_count if model_result.prompt_eval_count is not None else 'unknown'}`\n"
-        f"- Output tokens generated: `{model_result.eval_count if model_result.eval_count is not None else 'unknown'}`\n"
-        f"- Generation stop reason: `{model_result.done_reason or 'unknown'}`\n"
-        f"- Elapsed seconds: `{time.monotonic() - started:.1f}`\n\n"
+        f"- Model: {model} (local Ollama, CPU)\n"
+        f"- Event: {os.environ.get('GITHUB_EVENT_NAME', 'local')}\n"
+        f"- Workflow commit: {os.environ.get('GITHUB_SHA', 'unknown')}\n"
+        f"- PR head commit: {os.environ.get('GITHUB_PR_HEAD_SHA', 'unknown')}\n"
+        f"- Changed file chunks reviewed: {len(context_result.chunks)}\n"
+        f"- Additional files omitted by bounds: {context_result.omitted_files}\n"
+        f"- Context bytes supplied: {len(context_result.text.encode('utf-8'))}\n"
+        f"- Context truncated: {str(context_result.truncated).lower()}\n"
+        f"- Per-file context limit: {MAX_CONTEXT_BYTES} UTF-8 bytes\n"
+        f"- Total context limit: {MAX_TOTAL_CONTEXT_BYTES} UTF-8 bytes\n"
+        f"- Maximum files: {MAX_REVIEW_FILES}\n"
+        f"- Context window per request: {NUM_CTX} tokens\n"
+        f"- Output token budget per request: {NUM_PREDICT} tokens\n"
+        f"- Prompt tokens evaluated (min/max): {min(prompt_tokens) if prompt_tokens else 'unknown'}/{max(prompt_tokens) if prompt_tokens else 'unknown'}\n"
+        f"- Output tokens generated (total): {sum(output_tokens)}\n"
+        f"- Generation stop reasons: {', '.join(stop_reasons) if stop_reasons else 'unknown'}\n"
+        f"- Total review time budget: {MAX_REVIEW_SECONDS} seconds\n"
+        f"- Elapsed seconds: {time.monotonic() - started:.1f}\n\n"
         "> Automated model output is advisory. It is not a CI pass, security certification, "
         "or approval to merge.\n\n"
         f"{review}\n",
@@ -513,7 +516,6 @@ def main() -> int:
     )
     print(f"Report written to {report_path}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
