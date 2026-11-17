@@ -84,8 +84,11 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - The model container has bounded CPU, memory and process count. It requires network access
   to download the container image and model weights. The workflow runner itself also requires
   network access.
-- The workflow uses a versioned container tag, not a digest pin. Pin a verified image digest
-  before treating this as a hardened supply-chain deployment.
+- The workflow pins the Ollama 0.6.8 `linux/amd64` image manifest by digest:
+  `sha256:6697852aa235e8fb4e1e77cfab9bbf70d51d3760cb0d266e9fb43cf2b8e44f66`.
+  This prevents the image reference from silently changing when a tag is updated. The digest
+  is architecture-specific; verify and update it deliberately when changing the runner platform
+  or Ollama version. Source: https://hub.docker.com/layers/ollama/ollama/0.6.8/images/sha256-6697852aa235e8fb4e1e77cfab9bbf70d51d3760cb0d266e9fb43cf2b8e44f66?tab=layers
 - Reports are written to the runner's temporary directory, never to a pre-existing file in the
   caller checkout. Missing reports are ignored on upload.
 - No automatic retries for inference; rerun the failed workflow manually.
