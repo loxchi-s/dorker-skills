@@ -161,9 +161,14 @@ def collect_context(base_ref: str = "") -> ContextResult:
         file_path = path_match.group(1) if path_match else "(diff)"
         reviewed_files += 1
 
-        # Reserve room for a stable file/segment label in every model request.
-        label_budget = 160
+        # Reserve room for the longest segment label and the actual path.
+        label_budget = len(
+            f"File: {file_path} | diff segment 999/999\\n".encode("utf-8")
+        )
         segment_budget = MAX_CONTEXT_BYTES - label_budget
+        if segment_budget <= 0:
+            omitted_files += 1 + len(file_diffs) - file_index - 1
+            break
         raw_segments = _split_utf8_text(file_diff, segment_budget)
         total_segments = len(raw_segments)
         file_chunks: list[ContextChunk] = []
@@ -173,11 +178,12 @@ def collect_context(base_ref: str = "") -> ContextResult:
             label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
             chunk_text = label + segment
             chunk_bytes = len(chunk_text.encode("utf-8"))
-            if len(chunks) + len(file_chunks) >= MAX_REVIEW_CHUNKS or chunk_bytes > remaining_bytes:
+            separator_bytes = 2 if chunks or file_chunks else 0
+            if len(chunks) + len(file_chunks) >= MAX_REVIEW_CHUNKS or chunk_bytes + separator_bytes > remaining_bytes:
                 file_incomplete = True
                 break
             file_chunks.append(ContextChunk(path=file_path, text=chunk_text, truncated=False))
-            remaining_bytes -= chunk_bytes
+            remaining_bytes -= chunk_bytes + separator_bytes
 
         if file_incomplete:
             omitted_files += 1
