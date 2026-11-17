@@ -29,6 +29,10 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 NUM_CTX = 8192
 NUM_PREDICT = 1536
 CONTEXT_SAFETY_RATIO = 0.90
+TRUNCATION_NOTICE = (
+    "\nThis file diff was truncated. Do not return NO_ACTIONABLE_FINDINGS; "
+    "return INCOMPLETE and explain the missing coverage."
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,7 @@ class ContextChunk:
     path: str
     text: str
     truncated: bool
+    reviewable: bool = True
 
 
 @dataclass(frozen=True)
@@ -281,7 +286,7 @@ def _decode_git_path(token: str) -> str:
 def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
     request_budget = calculate_token_budget(
         system_prompt=REVIEW_SYSTEM_PROMPT,
-        user_prompt=prompt_text[:3000],
+        user_prompt=prompt_text[:3000] + TRUNCATION_NOTICE,
         context_window=NUM_CTX,
         output_reserve=NUM_PREDICT,
         safety_ratio=CONTEXT_SAFETY_RATIO,
@@ -316,6 +321,19 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
             header,
         )
         file_path = _decode_git_path(path_match.group(2)) if path_match else "(diff)"
+
+        if re.search(r"(?m)^(?:Binary files .+ differ|GIT binary patch)$", file_diff):
+            file_plans.append({
+                "segments": [ContextChunk(
+                    path=file_path,
+                    text=f"File: {file_path}\nBinary diff has no reviewable textual content.",
+                    truncated=True,
+                    reviewable=False,
+                )],
+                "next": 0,
+                "last_index": None,
+            })
+            continue
 
         # Reserve the exact label shape, a conservative line-number width,
         # and the continuation marker before allocating bytes to diff content.
@@ -397,6 +415,7 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
                     path=last.path,
                     text=last.text,
                     truncated=True,
+                    reviewable=last.reviewable,
                 )
 
     if not chunks:
@@ -671,6 +690,16 @@ def review_context_chunks(
     deadline = time.monotonic() + MAX_REVIEW_SECONDS
 
     for index, chunk in enumerate(chunks):
+        if not chunk.reviewable:
+            results.append(ChunkReview(
+                path=chunk.path,
+                status="INCOMPLETE",
+                text="",
+                reason="Binary diff has no textual content for the model to inspect.",
+                model_response=None,
+            ))
+            continue
+
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             results.extend(
@@ -685,12 +714,7 @@ def review_context_chunks(
             )
             break
 
-        chunk_prompt = prompt
-        if chunk.truncated:
-            chunk_prompt += (
-                "\nThis file diff was truncated. Do not return NO_ACTIONABLE_FINDINGS; "
-                "return INCOMPLETE and explain the missing coverage."
-            )
+        chunk_prompt = prompt + (TRUNCATION_NOTICE if chunk.truncated else "")
         try:
             model_result = ask_model(
                 model,
@@ -823,7 +847,15 @@ def main() -> int:
     report_path = Path(os.environ.get("LOCAL_AI_REPORT", "local-ai-report.md"))
     started = time.monotonic()
 
+    budget = None
     try:
+        budget = calculate_token_budget(
+            system_prompt=REVIEW_SYSTEM_PROMPT,
+            user_prompt=prompt[:3000] + TRUNCATION_NOTICE,
+            context_window=NUM_CTX,
+            output_reserve=NUM_PREDICT,
+            safety_ratio=CONTEXT_SAFETY_RATIO,
+        )
         context_result = collect_context(base_ref, prompt)
         chunk_reviews = review_context_chunks(context_result.chunks, model, prompt)
         review = build_aggregate_report(chunk_reviews, context_result.omitted_files)
@@ -842,6 +874,20 @@ def main() -> int:
             for item in chunk_reviews
             if item.model_response and item.model_response.done_reason
         })
+    except ValueError as exc:
+        context_result = ContextResult(
+            text="", truncated=True, chunks=(), omitted_files=0
+        )
+        chunk_reviews = (ChunkReview(
+            path="(prompt)",
+            status="INCOMPLETE",
+            text="",
+            reason=f"Context budget rejected before inference: {exc}",
+            model_response=None,
+        ),)
+        prompt_tokens = []
+        output_tokens = []
+        stop_reasons = []
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -863,7 +909,7 @@ def main() -> int:
         f"- Context window per request: {NUM_CTX} tokens\n"
         f"- Input safety ceiling: {CONTEXT_SAFETY_RATIO:.0%} ({int(NUM_CTX * CONTEXT_SAFETY_RATIO)} tokens)\n"
         f"- Effective input limit after output reserve: {min(int(NUM_CTX * CONTEXT_SAFETY_RATIO), NUM_CTX - NUM_PREDICT)} tokens\n"
-        f"- Diff token budget per request: {calculate_token_budget(system_prompt=REVIEW_SYSTEM_PROMPT, user_prompt=prompt[:3000], context_window=NUM_CTX, output_reserve=NUM_PREDICT, safety_ratio=CONTEXT_SAFETY_RATIO).diff_token_budget} tokens (conservative upper bound)\n"
+        f"- Diff token budget per request: {budget.diff_token_budget if budget else 'unavailable (prompt rejected)'} tokens (conservative upper bound)\n"
         f"- Output token budget per request: {NUM_PREDICT} tokens\n"
         "- Preflight token estimator: UTF-8 byte upper bound plus 128-token framing reserve (conservative estimate, not exact tokenizer count)\n"
         f"- Prompt tokens evaluated (min/max): {min(prompt_tokens) if prompt_tokens else 'unknown'}/{max(prompt_tokens) if prompt_tokens else 'unknown'}\n"
