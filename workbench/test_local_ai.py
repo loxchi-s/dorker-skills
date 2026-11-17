@@ -447,6 +447,18 @@ class PerFileChunkingTests(unittest.TestCase):
         self.assertLessEqual(len(result.text.encode("utf-8")), MAX_TOTAL_CONTEXT_BYTES)
 
     @patch("local_ai._git_output")
+    def test_collect_context_keeps_normal_diff_lines_whole(self, git_output):
+        diff = "diff --git a/lines.py b/lines.py\n" + "".join(
+            f"+line-{index:04d}-" + ("x" * 80) + "\n"
+            for index in range(100)
+        )
+        git_output.return_value = diff
+        result = collect_context("main")
+        self.assertGreater(len(result.chunks), 1)
+        segments = [chunk.text.split("\n", 1)[-1] for chunk in result.chunks]
+        self.assertTrue(all(segment.endswith("\n") for segment in segments[:-1]))
+
+    @patch("local_ai._git_output")
     def test_collect_context_marks_file_incomplete_when_chunk_count_exhausted(self, git_output):
         huge = "diff --git a/huge.py b/huge.py\n" + ("z" * (MAX_CONTEXT_BYTES * (MAX_REVIEW_CHUNKS + 1)))
         later = "diff --git a/later.py b/later.py\n+later"
