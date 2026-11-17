@@ -569,12 +569,12 @@ class PerFileChunkingTests(unittest.TestCase):
     @patch("local_ai._git_output")
     def test_large_first_file_does_not_exclude_later_changed_files(self, git_output):
         huge = (
-            "diff --git a/huge.py b/huge.py\\n"
+            "diff --git a/huge.py b/huge.py\n"
             + ("z" * (MAX_CONTEXT_BYTES * (MAX_REVIEW_CHUNKS + 1)))
         )
-        later_one = "diff --git a/later_one.py b/later_one.py\\n+later_one"
-        later_two = "diff --git a/later_two.py b/later_two.py\\n+later_two"
-        git_output.return_value = huge + "\\n" + later_one + "\\n" + later_two
+        later_one = "diff --git a/later_one.py b/later_one.py\n+later_one"
+        later_two = "diff --git a/later_two.py b/later_two.py\n+later_two"
+        git_output.return_value = huge + "\n" + later_one + "\n" + later_two
 
         result = collect_context("main")
 
