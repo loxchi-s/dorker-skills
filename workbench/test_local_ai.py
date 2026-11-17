@@ -27,6 +27,7 @@ from local_ai import (
     _diff_position_at_offset,
     _changed_diff_lines,
     _decode_git_path,
+    _split_utf8_text,
 )
 
 
@@ -879,6 +880,23 @@ Runtime behavior is unknown.
 Add a path-with-spaces regression test.
 """
         self.assertTrue(validate_review_output(review, diff, "my file.py"))
+
+
+    def test_patch_line_parsing_treats_u2028_as_source_content(self):
+        source_line = 'value = "alpha\u2028+dangerous_call_with_context();"'
+        diff = (
+            "diff --git a/sample.py b/sample.py\\n"
+            "@@ -0,0 +1,1 @@\\n"
+            "+" + source_line + "\\n"
+        )
+        self.assertEqual([("new", 1, source_line)], _changed_diff_lines(diff))
+        self.assertEqual([diff.split("@@ -0,0 +1,1 @@\\n", 1)[1]], _split_utf8_text(diff, 4096))
+
+    def test_lf_segmenter_preserves_crlf_and_does_not_split_u2028(self):
+        value = "first\r\\nsecond\u2028still-second\\nthird"
+        parts = _split_utf8_text(value, 4096)
+        self.assertEqual(value, "".join(parts))
+        self.assertEqual(1, len(parts))
 
     def test_direct_test_execution_includes_all_regression_classes(self):
         source = Path(__file__).read_text(encoding="utf-8")
