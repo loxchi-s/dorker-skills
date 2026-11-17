@@ -9,7 +9,8 @@ Ubuntu runner and a versioned Ollama container; no external AI API key is requir
 - Pull-request review (pull_request) with read-only repository permissions.
 - Reusable workflow (workflow_call) so another repository can call this workflow.
 - Qwen 2.5 1.5B through Ollama, downloaded at run time and executed locally on CPU.
-- Bounded Git diff context, common-secret redaction, timeout, and a Markdown artifact.
+- Bounded Git diff context, common-secret redaction, timeout, output-contract validation,
+  Ollama completion/token-usage checks, and a Markdown artifact.
 - The model output is advisory. It cannot write files, create commits, approve PRs, merge,
   deploy, or access repository secrets.
 
@@ -56,8 +57,13 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - Ollama container: capped at 2 CPU cores, 4 GiB RAM, and 256 processes.
 - Model: qwen2.5:1.5b; model weights are downloaded on each fresh runner unless a cache is
   added later. No GPU is requested.
-- Job timeout: 25 minutes; Git diff context: 24,000 UTF-8 bytes; generation context: 4,096
-  tokens; output: at most 768 tokens.
+- Job timeout: 25 minutes; Git diff context: at most 6,000 UTF-8 bytes (a conservative byte cap,
+  not a tokenizer guarantee); generation context: 4,096 tokens; output: at most 768 tokens.
+- Reports include Ollama's `prompt_eval_count`, `eval_count`, and `done_reason`. The report is
+  marked `INCOMPLETE` when completion metadata is missing, generation stops with
+  `done_reason=length`, the prompt plus output budget reaches the context limit, or the model
+  response fails the evidence-based review contract. This is a post-inference safety check; it
+  does not prove that no prompt truncation occurred.
 - Parallelism: one model job per workflow run. Repository-level concurrency cancels superseded
   runs for the same ref.
 
