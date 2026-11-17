@@ -10,6 +10,7 @@ from local_ai import (
     ask_model,
     collect_context,
     redact_secrets,
+    validate_review_output,
 )
 
 
@@ -59,6 +60,47 @@ class ModelPromptTests(unittest.TestCase):
         self.assertIn("diff --git a/a.py b/a.py", payload["prompt"])
         self.assertIn("Do not summarize files", payload["system"])
         self.assertIn("file and line", payload["system"])
+
+
+class ReviewOutputValidationTests(unittest.TestCase):
+    def test_rejects_generic_repository_summary(self):
+        generic = "This script contains redaction, context collection, and tests."
+        self.assertFalse(validate_review_output(generic))
+
+    def test_accepts_evidence_based_actionable_finding(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence: The function returns before closing the response stream.
+- Impact: Repeated requests may leak resources.
+- Fix: Use a context manager for the response.
+
+## Risks and Unknowns
+The behavior under network interruption is not verified.
+
+## Tests Needed
+Add a mocked response-close test.
+"""
+        self.assertTrue(validate_review_output(review))
+
+    def test_accepts_no_actionable_findings_with_required_sections(self):
+        review = """## Verdict
+NO_ACTIONABLE_FINDINGS
+
+## Findings
+No actionable findings were identified in the supplied diff.
+
+## Risks and Unknowns
+Runtime behavior was not exercised.
+
+## Tests Needed
+Run integration tests in the target environment.
+"""
+        self.assertTrue(validate_review_output(review))
+
 
 
 class ContextBoundsTests(unittest.TestCase):
