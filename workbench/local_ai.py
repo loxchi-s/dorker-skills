@@ -516,6 +516,24 @@ def review_context_chunks(
     return tuple(results)
 
 
+def _extract_review_section(review: str, heading: str) -> str:
+    """Extract a model section without losing its source-specific content."""
+    headings = {"Verdict", "Findings", "Risks and Unknowns", "Tests Needed"}
+    lines = review.splitlines()
+    collecting = False
+    content: list[str] = []
+    for line in lines:
+        normalized = line.strip().lstrip("#").strip().rstrip(":").strip()
+        if normalized in headings:
+            if collecting:
+                break
+            collecting = normalized == heading
+            continue
+        if collecting:
+            content.append(line)
+    return "\n".join(content).strip()
+
+
 def build_aggregate_report(
     reviews: tuple[ChunkReview, ...],
     omitted_files: int,
@@ -528,45 +546,36 @@ def build_aggregate_report(
 
     sections = ["## Verdict", verdict, "", "## Findings"]
     for item in reviews:
-        sections.extend(["", f"### File: {item.path}"])
+        sections.extend(["", f"### Source: {item.path}"])
         if item.status == "REVIEW_REQUIRED":
-            findings_match = re.search(
-                r"(?ims)^[ \t]*(?:#{1,6}[ \t]*)?Findings[ \t]*:?[ \t]*\n(.*?)(?=^[ \t]*(?:#{1,6}[ \t]*)?(?:Risks and Unknowns|Tests Needed)[ \t]*:?[ \t]*$)",
-                item.text,
-            )
-            sections.append(
-                findings_match.group(1).strip()
-                if findings_match
-                else "Validated actionable findings were returned."
-            )
+            findings = _extract_review_section(item.text, "Findings")
+            sections.append(findings or "Validated actionable findings were returned.")
         elif item.status == "NO_ACTIONABLE_FINDINGS":
             sections.append("No actionable findings were identified for this file.")
         else:
-            sections.append(f"Review incomplete: {item.reason or 'No complete response was produced.'}")
+            sections.append(f"Review incomplete: {item.reason or \"No complete response was produced.\"}")
             if item.text:
                 sections.extend(["", "Raw model output:", item.text])
 
+        for heading in ("Risks and Unknowns", "Tests Needed"):
+            detail = _extract_review_section(item.text, heading)
+            if detail:
+                sections.extend(["", f"#### {heading} — {item.path}", detail])
+
     if omitted_files:
         sections.extend(["", f"{omitted_files} additional file(s) were not reviewed due to configured bounds."])
-
     sections.extend(["", "## Risks and Unknowns"])
-    if incomplete:
-        sections.append(
-            "The review did not cover every changed file completely or one or more model responses "
-            "failed the completion/evidence contract."
-        )
-    else:
-        sections.append(
-            "All selected file chunks completed the model response contract; findings still require human verification."
-        )
-
+    sections.append(
+        "The review did not cover every changed file completely or one or more model responses failed the completion/evidence contract."
+        if incomplete else
+        "All selected file chunks completed the model response contract; findings still require human verification."
+    )
     sections.extend(["", "## Tests Needed"])
-    if incomplete:
-        sections.append(
-            "Split the remaining large changes into smaller pull requests or raise bounded limits deliberately, then rerun the review."
-        )
-    else:
-        sections.append("Manually verify each reported finding and run the repository's relevant tests.")
+    sections.append(
+        "Split remaining large changes or adjust bounds deliberately, then rerun the review."
+        if incomplete else
+        "Manually verify each reported finding and run the repository relevant tests."
+    )
     return "\n".join(sections)
 
 
