@@ -892,6 +892,7 @@ def main() -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
 
+    review = build_aggregate_report(chunk_reviews, context_result.omitted_files)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         "# Local AI Review\n\n"
