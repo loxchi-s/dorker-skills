@@ -18,6 +18,11 @@ MAX_CONTEXT_BYTES = 24_000
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
+_SECRET_ASSIGNMENT = re.compile(
+    r"""(?i)(["']?(?:api[_-]?key|access[_-]?token|client[_-]?secret|password|secret)["']?\s*[:=]\s*)"""
+    r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)"""
+)
+
 
 def redact_secrets(value: str) -> str:
     """Redact common credentials before sending repository text to the model."""
@@ -29,13 +34,7 @@ def redact_secrets(value: str) -> str:
     )
     value = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]", value)
     value = re.sub(r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]", value)
-    value = re.sub(
-        r"(?i)\b(api[_-]?key|access[_-]?token|client[_-]?secret|password|secret)\b"
-        r"(\s*[:=]\s*)([\"']?)[^\s,\"'`]+",
-        r"\1\2[REDACTED]",
-        value,
-    )
-    return value
+    return _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
 
 
 def _git_output(args: list[str], timeout: int = 30) -> str:
