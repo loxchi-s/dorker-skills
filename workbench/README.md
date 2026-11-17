@@ -90,7 +90,7 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - **Durability and cleanup:** reports are uploaded with a run-specific name and seven-day
   retention. The Ollama container is removed in an always-run cleanup step. Runner-local state
   is otherwise disposable; no result is written back to the caller repository.
-- **Resource bounds:** at most 8 changed files, 6,000 UTF-8 bytes per file, 24,000 bytes total,
+- **Resource bounds:** at most 8 changed files, 8 review chunks, 6,000 UTF-8 bytes per chunk, 48,000 bytes total,
   12 minutes of inference time, and 120 seconds per model request. The GitHub job timeout is
   25 minutes. Exceeding a review bound is reported as incomplete, not silently treated as a
   complete review.
