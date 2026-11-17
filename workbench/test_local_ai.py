@@ -1,8 +1,9 @@
-import unittest
-from unittest.mock import patch
-
 import json
-from unittest.mock import Mock
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from local_ai import (
     MAX_CONTEXT_BYTES,
@@ -273,6 +274,51 @@ class ContextBoundsTests(unittest.TestCase):
         collect_context()
         args = git_output.call_args.args[0]
         self.assertIn("--diff-merges=first-parent", args)
+
+    def test_manual_review_includes_non_conflicting_second_parent_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo_path = Path(temporary)
+
+            def git(*args):
+                subprocess.run(
+                    ["git", *args],
+                    cwd=repo_path,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+            git("init", "-b", "main")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Workbench Test")
+            (repo_path / "base.txt").write_text("base\\n", encoding="utf-8")
+            git("add", "base.txt")
+            git("commit", "-m", "base")
+
+            git("branch", "side")
+            (repo_path / "main.py").write_text("main change\\n", encoding="utf-8")
+            git("add", "main.py")
+            git("commit", "-m", "main-side change")
+
+            git("checkout", "side")
+            (repo_path / "side.py").write_text("side change\\n", encoding="utf-8")
+            git("add", "side.py")
+            git("commit", "-m", "side change")
+
+            git("checkout", "main")
+            git("merge", "--no-ff", "side", "-m", "merge without conflicts")
+
+            real_run = subprocess.run
+
+            def run_in_repo(command, **kwargs):
+                return real_run(command, cwd=repo_path, **kwargs)
+
+            with patch("local_ai.subprocess.run", side_effect=run_in_repo):
+                result = collect_context()
+
+            self.assertIn("side.py", result.text)
+            self.assertIn("+side change", result.text)
+            self.assertNotIn("main.py", result.text)
 
     def test_collect_context_returns_text(self):
         self.assertIsInstance(collect_context().text, str)
