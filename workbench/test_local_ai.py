@@ -24,6 +24,7 @@ from local_ai import (
     redact_secrets,
     review_context_chunks,
     validate_review_output,
+    _diff_position_at_offset,
 )
 
 
@@ -603,3 +604,63 @@ Add a regression test.
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodeRabbitRegressionTests(unittest.TestCase):
+    def test_second_segment_keeps_hunk_line_coordinates(self):
+        diff = "diff --git a/sample.py b/sample.py\\n@@ -10,2 +10,2 @@\\n a\\n+b\\n c\\n"
+        second_offset = diff.index(" c\\n")
+        self.assertEqual((12, 12, False), _diff_position_at_offset(diff, second_offset))
+
+    def test_validator_rejects_line_number_outside_changed_hunk(self):
+        diff = "File: sample.py\\n@@ -10,1 +10,1 @@\\n-old_value\\n+new_value\\n"
+        review = """## Verdict
+REVIEW_REQUIRED
+## Findings
+- Severity: High
+- File: sample.py:999
+- Evidence: new_value
+- Impact: wrong value
+- Fix: correct assignment
+## Risks and Unknowns
+Unknown
+## Tests Needed
+Add regression test
+"""
+        self.assertFalse(validate_review_output(review, diff, "sample.py"))
+
+    def test_validator_accepts_backticks_inside_changed_line_evidence(self):
+        tick = chr(96)
+        changed = "const command = " + tick + "rm -rf ${target}" + tick + ";"
+        diff = "File: sample.py\\n@@ -1,1 +1,1 @@\\n-old\\n+" + changed + "\\n"
+        review = """## Verdict
+REVIEW_REQUIRED
+## Findings
+- Severity: Medium
+- File: sample.py:1
+- Evidence: const command = `rm -rf ${target}`;
+- Impact: command is unsafe
+- Fix: validate target
+## Risks and Unknowns
+Unknown
+## Tests Needed
+Add test
+"""
+        self.assertTrue(validate_review_output(review, diff, "sample.py"))
+
+    def test_aggregate_keeps_source_specific_risks_and_tests(self):
+        model_text = """## Verdict
+NO_ACTIONABLE_FINDINGS
+## Findings
+No actionable findings were identified.
+## Risks and Unknowns
+Parser may mishandle CRLF input.
+## Tests Needed
+Run test_parser_crlf_round_trip.
+"""
+        item = ChunkReview("parser.py", "NO_ACTIONABLE_FINDINGS", model_text, None, None)
+        report = build_aggregate_report((item,), omitted_files=0)
+        self.assertIn("Risks and Unknowns — parser.py", report)
+        self.assertIn("CRLF input", report)
+        self.assertIn("Tests Needed — parser.py", report)
+        self.assertIn("test_parser_crlf_round_trip", report)
