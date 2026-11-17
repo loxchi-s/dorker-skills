@@ -215,6 +215,20 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
         consumed += len(line)
     return old_line, new_line, continuation
 
+def _decode_git_path(token: str) -> str:
+    """Decode a Git diff path token, including C-quoted octal UTF-8 bytes."""
+    if not token.startswith('"'):
+        return token[2:] if token.startswith("b/") else token
+    import ast
+
+    decoded = ast.literal_eval(token)
+    try:
+        decoded = decoded.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    return decoded[2:] if decoded.startswith("b/") else decoded
+
+
 def collect_context(base_ref: str = "") -> ContextResult:
     if base_ref:
         raw = _git_output(
