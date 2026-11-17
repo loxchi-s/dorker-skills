@@ -6,9 +6,13 @@ from unittest.mock import Mock
 
 from local_ai import (
     MAX_CONTEXT_BYTES,
+    NUM_CTX,
+    NUM_PREDICT,
     REVIEW_SYSTEM_PROMPT,
+    ModelResponse,
     ask_model,
     collect_context,
+    model_response_incomplete_reason,
     redact_secrets,
     validate_review_output,
 )
@@ -46,14 +50,22 @@ class ModelPromptTests(unittest.TestCase):
     @patch("local_ai.urllib.request.urlopen")
     def test_model_request_uses_evidence_based_review_contract(self, urlopen):
         response = Mock()
-        response.read.return_value = json.dumps({"response": "Verdict: INCOMPLETE"}).encode()
+        response.read.return_value = json.dumps({
+            "response": "Verdict: INCOMPLETE",
+            "done_reason": "stop",
+            "prompt_eval_count": 100,
+            "eval_count": 20,
+        }).encode()
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         urlopen.return_value = response
 
         result = ask_model("test-model", "Review this patch", "diff --git a/a.py b/a.py")
 
-        self.assertEqual("Verdict: INCOMPLETE", result)
+        self.assertEqual("Verdict: INCOMPLETE", result.text)
+        self.assertEqual("stop", result.done_reason)
+        self.assertEqual(100, result.prompt_eval_count)
+        self.assertEqual(20, result.eval_count)
         request = urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(REVIEW_SYSTEM_PROMPT, payload["system"])
@@ -86,6 +98,25 @@ Add a mocked response-close test.
 """
         self.assertTrue(validate_review_output(review))
 
+    def test_rejects_empty_or_invalid_finding_fields(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity:
+- File: workbench/local_ai.py:42
+- Evidence:
+- Impact: Some impact
+- Fix: Some fix
+
+## Risks and Unknowns
+Unknown
+
+## Tests Needed
+Add test
+"""
+        self.assertFalse(validate_review_output(review))
+
     def test_accepts_no_actionable_findings_with_required_sections(self):
         review = """## Verdict
 NO_ACTIONABLE_FINDINGS
@@ -103,9 +134,38 @@ Run integration tests in the target environment.
 
 
 
+class ModelResponseStatusTests(unittest.TestCase):
+    def test_output_limit_marks_review_incomplete(self):
+        result = ModelResponse(
+            text="partial review",
+            done_reason="length",
+            prompt_eval_count=100,
+            eval_count=NUM_PREDICT,
+        )
+        self.assertIn("done_reason=length", model_response_incomplete_reason(result))
+
+    def test_context_budget_pressure_marks_review_incomplete(self):
+        result = ModelResponse(
+            text="review",
+            done_reason="stop",
+            prompt_eval_count=NUM_CTX - NUM_PREDICT,
+            eval_count=20,
+        )
+        self.assertIn("context tokens", model_response_incomplete_reason(result))
+
+    def test_missing_completion_metadata_marks_review_incomplete(self):
+        result = ModelResponse(
+            text="review",
+            done_reason=None,
+            prompt_eval_count=None,
+            eval_count=None,
+        )
+        self.assertIn("cannot be verified", model_response_incomplete_reason(result))
+
+
 class ContextBoundsTests(unittest.TestCase):
     def test_context_limit_is_fixed(self):
-        self.assertEqual(24_000, MAX_CONTEXT_BYTES)
+        self.assertEqual(6_000, MAX_CONTEXT_BYTES)
 
     def test_collect_context_returns_text(self):
         self.assertIsInstance(collect_context(), str)
