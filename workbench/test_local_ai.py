@@ -1,7 +1,16 @@
 import unittest
 from unittest.mock import patch
 
-from local_ai import MAX_CONTEXT_BYTES, collect_context, redact_secrets
+import json
+from unittest.mock import Mock
+
+from local_ai import (
+    MAX_CONTEXT_BYTES,
+    REVIEW_SYSTEM_PROMPT,
+    ask_model,
+    collect_context,
+    redact_secrets,
+)
 
 
 class RedactionTests(unittest.TestCase):
@@ -30,6 +39,26 @@ class RedactionTests(unittest.TestCase):
     def test_single_quoted_json_secret_is_redacted(self):
         value = "{'client_secret': 'sensitive value'}"
         self.assertEqual("{'client_secret': [REDACTED]}", redact_secrets(value))
+
+
+class ModelPromptTests(unittest.TestCase):
+    @patch("local_ai.urllib.request.urlopen")
+    def test_model_request_uses_evidence_based_review_contract(self, urlopen):
+        response = Mock()
+        response.read.return_value = json.dumps({"response": "Verdict: INCOMPLETE"}).encode()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        urlopen.return_value = response
+
+        result = ask_model("test-model", "Review this patch", "diff --git a/a.py b/a.py")
+
+        self.assertEqual("Verdict: INCOMPLETE", result)
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(REVIEW_SYSTEM_PROMPT, payload["system"])
+        self.assertIn("diff --git a/a.py b/a.py", payload["prompt"])
+        self.assertIn("Do not summarize files", payload["system"])
+        self.assertIn("file and line", payload["system"])
 
 
 class ContextBoundsTests(unittest.TestCase):
