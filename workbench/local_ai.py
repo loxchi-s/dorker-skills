@@ -295,7 +295,7 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
 
         # Reserve room for the longest segment label and the actual path.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/at-least-999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
         )
         segment_budget = request_context_bytes - label_budget
         if segment_budget <= 0:
