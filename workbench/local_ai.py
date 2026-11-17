@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -65,12 +66,17 @@ REVIEW_SYSTEM_PROMPT = (
     "the diff: correctness bugs, security weaknesses, data-loss risks, concurrency defects, "
     "resource leaks, compatibility regressions, or missing critical validation. "
     "Do not summarize files or list functions. Do not invent behavior, tests, line numbers, "
-    "or evidence. Findings must point to a changed file and a changed line when available. "
+    "or evidence. Findings must point to a changed file and a changed line. "
     "For each finding include severity (Critical/High/Medium/Low), file and line, evidence, "
     "impact, and a concrete fix. Evidence must quote an exact changed line from the supplied "
     "diff segment; never cite an unchanged line or infer unseen code. If no actionable defect is supported, say exactly that no "
     "actionable findings were identified and explain what was not verified. "
-    "Always include sections: Verdict, Findings, Risks and Unknowns, Tests Needed. "
+    "Use exactly these Markdown headings, each on its own line: '## Verdict', '## Findings', "
+    "'## Risks and Unknowns', and '## Tests Needed'. Put exactly one allowed verdict token "
+    "on the line immediately after '## Verdict'. For each finding use separate lines in this "
+    "format: '- Severity: High', '- File: path/to/file.py:123', '- Evidence: exact changed line', "
+    "'- Impact: concrete consequence', and '- Fix: concrete correction'. A decimal line number "
+    "is required; line ranges and backticks around the file reference are also acceptable. "
     "Verdict must be one of REVIEW_REQUIRED, NO_ACTIONABLE_FINDINGS, or INCOMPLETE. "
     "Never claim tests passed unless test output is supplied."
 )
@@ -267,8 +273,16 @@ def ask_model(
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = json.loads(response.read(2_000_000))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except (
+        urllib.error.URLError,
+        http.client.HTTPException,
+        TimeoutError,
+        OSError,
+        ValueError,
+    ) as exc:
         raise RuntimeError(f"Local model request failed: {exc}") from exc
+    if not isinstance(body, dict):
+        raise RuntimeError("Local model returned a non-object JSON response")
     result = body.get("response")
     if not isinstance(result, str) or not result.strip():
         raise RuntimeError("Local model returned an empty or invalid response")
@@ -342,7 +356,7 @@ def validate_review_output(
         r"^[ \t]*(?:[-*][ \t]*)?(Severity|File|Evidence|Impact|Fix)[ \t]*:[ \t]*(.*?)[ \t]*$",
         re.IGNORECASE,
     )
-    file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\d+$", re.IGNORECASE)
+    file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\d+(?:-\d+)?$", re.IGNORECASE)
     blocks: list[list[str]] = []
     current: list[str] = []
     seen_fields: set[str] = set()
@@ -375,10 +389,11 @@ def validate_review_output(
             return False
         if values["Severity"].lower() not in {"critical", "high", "medium", "low"}:
             return False
-        if file_line_pattern.fullmatch(values["File"]) is None:
+        file_reference = values["File"].strip().strip("`")
+        if file_line_pattern.fullmatch(file_reference) is None:
             return False
         if expected_path is not None:
-            cited_path = values["File"].rsplit(":", 1)[0]
+            cited_path = file_reference.rsplit(":", 1)[0]
             if cited_path != expected_path:
                 return False
         if diff_context is not None:
@@ -505,7 +520,7 @@ def build_aggregate_report(
         sections.extend(["", f"### File: {item.path}"])
         if item.status == "REVIEW_REQUIRED":
             findings_match = re.search(
-                r"(?ims)^\s*#{1,6}\s*Findings\s*:?\s*\n(.*?)(?=^\s*#{1,6}\s*(?:Risks and Unknowns|Tests Needed)\s*:?\s*$)",
+                r"(?ims)^[ \t]*(?:#{1,6}[ \t]*)?Findings[ \t]*:?[ \t]*\n(.*?)(?=^[ \t]*(?:#{1,6}[ \t]*)?(?:Risks and Unknowns|Tests Needed)[ \t]*:?[ \t]*$)",
                 item.text,
             )
             sections.append(
