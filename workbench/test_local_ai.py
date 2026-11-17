@@ -314,7 +314,10 @@ class PerFileChunkingTests(unittest.TestCase):
         result = collect_context("main")
         self.assertTrue(result.truncated)
         self.assertTrue(result.chunks[0].truncated)
-        self.assertEqual(1, result.omitted_files)
+        self.assertEqual(2, len(result.chunks))
+        self.assertEqual("next.py", result.chunks[1].path)
+        self.assertFalse(result.chunks[1].truncated)
+        self.assertEqual(0, result.omitted_files)
         self.assertLessEqual(
             len(result.text.encode("utf-8")),
             MAX_TOTAL_CONTEXT_BYTES,
