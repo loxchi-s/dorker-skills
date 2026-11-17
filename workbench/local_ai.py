@@ -400,23 +400,26 @@ def validate_review_output(
             return False
         if values["Severity"].lower() not in {"critical", "high", "medium", "low"}:
             return False
-        file_reference = values["File"].strip().strip("`")
+        file_reference = values["File"].strip()
+        if file_reference.startswith(chr(96)) and file_reference.endswith(chr(96)):
+            file_reference = file_reference[1:-1]
         if file_line_pattern.fullmatch(file_reference) is None:
             return False
-        if expected_path is not None:
-            cited_path = file_reference.rsplit(":", 1)[0]
-            if cited_path != expected_path:
-                return False
+        match = re.fullmatch(r"(.+?)(?::|,\\s*line\\s+)(\\d+)(?:-(\\d+))?", file_reference, re.IGNORECASE)
+        if match is None:
+            return False
+        cited_path = match.group(1)
+        first_line = int(match.group(2))
+        last_line = int(match.group(3) or first_line)
+        if last_line < first_line or (expected_path is not None and cited_path != expected_path):
+            return False
         if diff_context is not None:
-            changed_lines = [
-                line[1:].strip()
-                for line in diff_context.splitlines()
-                if line.startswith(("+", "-"))
-                and not line.startswith(("+++", "---"))
-                and line[1:].strip()
-            ]
             evidence = _unwrap_evidence(values["Evidence"])
-            if not changed_lines or not any(changed_line in evidence for changed_line in changed_lines):
+            matching_lines = [
+                number for _, number, changed_line in _changed_diff_lines(diff_context)
+                if changed_line and changed_line in evidence
+            ]
+            if not matching_lines or not any(first_line <= number <= last_line for number in matching_lines):
                 return False
     return validated_findings > 0
 
