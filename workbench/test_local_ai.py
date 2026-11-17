@@ -25,6 +25,7 @@ from local_ai import (
     review_context_chunks,
     validate_review_output,
     _diff_position_at_offset,
+    _changed_diff_lines,
 )
 
 
@@ -675,10 +676,6 @@ Add a regression test.
         self.assertIn("concrete defect", report)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CodeRabbitRegressionTests(unittest.TestCase):
     def test_second_segment_keeps_hunk_line_coordinates(self):
         diff = "diff --git a/sample.py b/sample.py\n@@ -10,2 +10,2 @@\n a\n+b\n c\n"
@@ -686,13 +683,13 @@ class CodeRabbitRegressionTests(unittest.TestCase):
         self.assertEqual((11, 12, False), _diff_position_at_offset(diff, second_offset))
 
     def test_validator_rejects_line_number_outside_changed_hunk(self):
-        diff = "File: sample.py\n@@ -10,1 +10,1 @@\n-old_value\n+new_value\n"
+        diff = "File: sample.py\n@@ -10,1 +10,1 @@\n-old_value = 0\n+new_value = 123\n"
         review = """## Verdict
 REVIEW_REQUIRED
 ## Findings
 - Severity: High
 - File: sample.py:999
-- Evidence: new_value
+- Evidence: new_value = 123
 - Impact: wrong value
 - Fix: correct assignment
 ## Risks and Unknowns
@@ -737,3 +734,91 @@ Run test_parser_crlf_round_trip.
         self.assertIn("CRLF input", report)
         self.assertIn("Tests Needed — parser.py", report)
         self.assertIn("test_parser_crlf_round_trip", report)
+
+    def test_aggregate_extracts_lowercase_findings_heading(self):
+        model_text = """## Verdict
+REVIEW_REQUIRED
+## findings:
+- Severity: Medium
+- File: parser.py:12
+- Evidence: a sufficiently long changed line
+- Impact: The parser may discard the result.
+- Fix: Preserve the extracted section.
+## Risks and Unknowns
+Runtime behavior is unknown.
+## Tests Needed
+Add a regression test.
+"""
+        item = ChunkReview("parser.py", "REVIEW_REQUIRED", model_text, None, None)
+        report = build_aggregate_report((item,), omitted_files=0)
+        self.assertIn("Severity: Medium", report)
+        self.assertIn("sufficiently long changed line", report)
+
+    def test_changed_diff_lines_counts_plus_prefixed_source_lines(self):
+        diff = (
+            "diff --git a/sample.cpp b/sample.cpp\n"
+            "+++ b/sample.cpp\n"
+            "@@ -9,0 +10,2 @@\n"
+            "+++requestCount;\n"
+            "+send(requestCount);\n"
+        )
+        self.assertEqual(
+            [("new", 10, "++requestCount;"), ("new", 11, "send(requestCount);")],
+            _changed_diff_lines(diff),
+        )
+
+    def test_diff_position_counts_plus_prefixed_source_lines(self):
+        diff = (
+            "diff --git a/sample.cpp b/sample.cpp\n"
+            "+++ b/sample.cpp\n"
+            "@@ -9,0 +10,2 @@\n"
+            "+++requestCount;\n"
+            "+send(requestCount);\n"
+        )
+        offset = diff.index("+send(requestCount);")
+        self.assertEqual((9, 11, False), _diff_position_at_offset(diff, offset))
+
+    def test_pem_redaction_preserves_diff_line_coordinates(self):
+        diff = (
+            "diff --git a/key.py b/key.py\n"
+            "@@ -0,0 +1,4 @@\n"
+            "+-----BEGIN PRIVATE KEY-----\n"
+            "+secret-material\n"
+            "+-----END PRIVATE KEY-----\n"
+            "+dangerous_call();\n"
+        )
+        redacted = redact_secrets(diff)
+        self.assertNotIn("secret-material", redacted)
+        self.assertEqual(diff.count("\n"), redacted.count("\n"))
+        self.assertEqual(("new", 4, "dangerous_call();"), _changed_diff_lines(redacted)[-1])
+
+    def test_validator_accepts_file_paths_with_spaces(self):
+        diff = (
+            "diff --git a/my file.py b/my file.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+dangerous_call_with_context();\n"
+        )
+        review = """## Verdict
+REVIEW_REQUIRED
+## Findings
+- Severity: Medium
+- File: my file.py:1
+- Evidence: dangerous_call_with_context();
+- Impact: The changed call may be unsafe.
+- Fix: Validate the argument before use.
+## Risks and Unknowns
+Runtime behavior is unknown.
+## Tests Needed
+Add a path-with-spaces regression test.
+"""
+        self.assertTrue(validate_review_output(review, diff, "my file.py"))
+
+    def test_direct_test_execution_includes_all_regression_classes(self):
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertGreater(
+            source.rfind('if __name__ == "__main__":'),
+            source.find("class CodeRabbitRegressionTests"),
+        )
+
+if __name__ == "__main__":
+    unittest.main()
