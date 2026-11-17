@@ -162,6 +162,34 @@ def _split_utf8_text(value: str, byte_limit: int) -> list[str]:
     return parts
 
 
+def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, int | None, bool]:
+    """Return old/new hunk cursors at a segment boundary and flag mid-line splits."""
+    old_line = new_line = None
+    consumed = 0
+    continuation = False
+    hunk = re.compile(r"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@")
+    for line in diff_text.splitlines(keepends=True):
+        if consumed >= offset:
+            break
+        if consumed + len(line) > offset:
+            continuation = True
+            break
+        body = line.rstrip("\\r\\n")
+        match = hunk.match(body)
+        if match:
+            old_line, new_line = int(match.group(1)), int(match.group(2))
+        elif old_line is not None and new_line is not None and body:
+            marker = body[0]
+            if marker == "+" and not body.startswith("+++"):
+                new_line += 1
+            elif marker == "-" and not body.startswith("---"):
+                old_line += 1
+            elif marker == " ":
+                old_line += 1
+                new_line += 1
+        consumed += len(line)
+    return old_line, new_line, continuation
+
 def collect_context(base_ref: str = "") -> ContextResult:
     if base_ref:
         raw = _git_output(
@@ -198,7 +226,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
 
         # Reserve room for the longest segment label and the actual path.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/999\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/999\\nPosition old=999999 new=999999 continuation=1\\n".encode("utf-8")
         )
         segment_budget = MAX_CONTEXT_BYTES - label_budget
         if segment_budget <= 0:
@@ -209,9 +237,17 @@ def collect_context(base_ref: str = "") -> ContextResult:
         file_chunks: list[ContextChunk] = []
         file_incomplete = False
 
+        consumed_chars = 0
         for segment_index, segment in enumerate(raw_segments, start=1):
-            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
-            chunk_text = label + segment
+            old_position, new_position, continuation = _diff_position_at_offset(file_diff, consumed_chars)
+            position = (
+                f"Position old={old_position or 'n/a'} new={new_position or 'n/a'} "
+                f"continuation={int(continuation)}\\n"
+            )
+            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
+            chunk_text = label + position + segment
+            consumed_chars += len(segment)
+            
             chunk_bytes = len(chunk_text.encode("utf-8"))
             separator_bytes = 2 if chunks or file_chunks else 0
             if len(chunks) + len(file_chunks) >= MAX_REVIEW_CHUNKS or chunk_bytes + separator_bytes > remaining_bytes:
