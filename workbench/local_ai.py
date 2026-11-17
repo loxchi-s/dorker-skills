@@ -110,6 +110,71 @@ def ask_model(model: str, prompt: str, context: str) -> str:
     return result.strip()
 
 
+
+_REQUIRED_REVIEW_SECTIONS = ("Verdict", "Findings", "Risks and Unknowns", "Tests Needed")
+_VALID_VERDICTS = {"REVIEW_REQUIRED", "NO_ACTIONABLE_FINDINGS", "INCOMPLETE"}
+
+
+def validate_review_output(review: str) -> bool:
+    """Return True only when model output follows the minimum review contract."""
+    heading_matches = {
+        name: re.search(
+            rf"(?im)^\\s*(?:#{{1,6}}\\s*)?{re.escape(name)}\\s*:?\\s*$",
+            review,
+        )
+        for name in _REQUIRED_REVIEW_SECTIONS
+    }
+    if any(match is None for match in heading_matches.values()):
+        return False
+
+    verdict_match = re.search(
+        r"(?im)^\\s*(?:#{{1,6}}\\s*)?Verdict\\s*:?\\s*\\n\\s*"
+        r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\\b",
+        review,
+    )
+    if verdict_match is None or verdict_match.group(1) not in _VALID_VERDICTS:
+        return False
+
+    findings_start = heading_matches["Findings"].end()
+    findings_end = heading_matches["Risks and Unknowns"].start()
+    findings = review[findings_start:findings_end]
+
+    if verdict_match.group(1) == "NO_ACTIONABLE_FINDINGS":
+        return "no actionable findings" in findings.lower()
+
+    if verdict_match.group(1) != "REVIEW_REQUIRED":
+        return True
+
+    required_fields = ("Severity", "File", "Evidence", "Impact", "Fix")
+    if any(
+        re.search(rf"(?im)^\\s*(?:[-*]\\s*)?{field}\\s*:", findings) is None
+        for field in required_fields
+    ):
+        return False
+    return re.search(
+        r"(?im)^\\s*(?:[-*]\\s*)?File\\s*:\\s*[^\\s]+\\s*(?::|,\\s*line\\s+)\\s*\\d+",
+        findings,
+    ) is not None
+
+
+def incomplete_review_report(review: str) -> str:
+    """Preserve raw model output while clearly rejecting an invalid review."""
+    return (
+        "## Verdict\\nINCOMPLETE\\n\\n"
+        "## Findings\\n"
+        "The model response did not satisfy the required evidence-based review contract. "
+        "Do not treat this output as a completed code review.\\n\\n"
+        "## Risks and Unknowns\\n"
+        "The model output was generic or structurally incomplete; no actionable findings "
+        "were accepted by the deterministic report validator.\\n\\n"
+        "## Tests Needed\\n"
+        "Re-run with a model/configuration that can follow the review contract, then "
+        "manually verify any reported finding against the diff.\\n\\n"
+        "## Raw Model Output\\n\\n"
+        f"{review}\\n"
+    )
+
+
 def main() -> int:
     prompt = os.environ.get(
         "LOCAL_AI_PROMPT",
@@ -123,6 +188,8 @@ def main() -> int:
     try:
         context = collect_context(base_ref)
         review = ask_model(model, prompt, context)
+        if not validate_review_output(review):
+            review = incomplete_review_report(review)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
