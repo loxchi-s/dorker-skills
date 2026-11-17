@@ -294,24 +294,6 @@ def validate_review_output(review: str) -> bool:
     return validated_findings > 0
 
 
-def incomplete_review_report(review: str, reason: str) -> str:
-    """Preserve raw model output while clearly rejecting an incomplete review."""
-    return (
-        "## Verdict\nINCOMPLETE\n\n"
-        "## Findings\n"
-        "The model response is incomplete and must not be treated as a completed code review.\n\n"
-        f"Reason: {reason}\n\n"
-        "## Risks and Unknowns\n"
-        "The model output was generic or structurally incomplete; no actionable findings "
-        "were accepted by the deterministic report validator.\n\n"
-        "## Tests Needed\n"
-        "Re-run with a model/configuration that can follow the review contract, then "
-        "manually verify any reported finding against the diff.\n\n"
-        "## Raw Model Output\n\n"
-        f"{review}\n"
-    )
-
-
 def _review_verdict(review: str) -> str | None:
     match = re.search(
         r"(?im)^\s*(?:#{1,6}\s*)?Verdict\s*:?\s*\n\s*"
@@ -371,10 +353,11 @@ def review_context_chunks(
 
         reason = model_response_incomplete_reason(model_result)
         if chunk.truncated:
-            reason = (
-                f"{reason} File diff for {chunk.path} exceeded the per-file or total context "
+            truncation_reason = (
+                f"File diff for {chunk.path} exceeded the per-file or total context "
                 "budget and was truncated."
-            ).strip()
+            )
+            reason = f"{reason} {truncation_reason}".strip()
         verdict = _review_verdict(model_result.text)
         if reason or not validate_review_output(model_result.text) or verdict == "INCOMPLETE":
             if not reason:
