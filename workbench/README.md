@@ -71,6 +71,30 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - Parallelism: one model job per workflow run. Repository-level concurrency cancels superseded
   runs for the same ref.
 
+## Execution contract
+
+- **Execution model:** one GitHub Actions job owns one review run. The Workbench process is a
+  bounded, synchronous coordinator that collects the caller diff, invokes local Ollama requests
+  sequentially per file, validates each response, and writes one aggregate Markdown report.
+- **Concurrency and identity:** GitHub Actions concurrency is keyed by repository and ref, with
+  superseded runs cancelled. The durable execution identity is the GitHub run ID and attempt;
+  the report records workflow commit and PR head commit separately. Each run uploads a
+  run-specific artifact.
+- **State ownership:** no mutable shared application state, database, or external queue is used.
+  Intermediate state lives only in process memory and the ephemeral runner's temporary directory.
+  GitHub Actions owns run status; the uploaded artifact is the retained review output.
+- **Failure semantics:** unit-test failure stops inference. A per-file model timeout, malformed
+  response, output-limit stop, context truncation, omitted file, or invalid finding contract
+  marks the aggregate verdict INCOMPLETE. A failed chunk does not erase validated findings from
+  other chunks. There are no automatic inference retries; rerun the workflow explicitly.
+- **Durability and cleanup:** reports are uploaded with a run-specific name and seven-day
+  retention. The Ollama container is removed in an always-run cleanup step. Runner-local state
+  is otherwise disposable; no result is written back to the caller repository.
+- **Resource bounds:** at most 8 changed files, 6,000 UTF-8 bytes per file, 24,000 bytes total,
+  12 minutes of inference time, and 120 seconds per model request. The GitHub job timeout is
+  25 minutes. Exceeding a review bound is reported as incomplete, not silently treated as a
+  complete review.
+
 ## Security boundaries
 
 - contents:read; checkout does not persist credentials.
