@@ -29,6 +29,7 @@ from local_ai import (
     _decode_git_path,
     _split_utf8_text,
 )
+from token_budget import calculate_token_budget, estimate_tokens_upper_bound
 
 
 class RedactionTests(unittest.TestCase):
@@ -914,6 +915,39 @@ Add a path-with-spaces regression test.
         parts = _split_utf8_text(value, 4096)
         self.assertEqual(value, "".join(parts))
         self.assertEqual(1, len(parts))
+
+    def test_segmenter_stops_after_requested_prefix_of_huge_line(self):
+        value = "x" * 1_000_000
+        parts = _split_utf8_text(value, 1024, max_parts=3)
+        self.assertEqual(3, len(parts))
+        self.assertEqual(3_072, sum(len(part.encode("utf-8")) for part in parts))
+
+    def test_diff_positions_do_not_copy_a_huge_line_before_requested_offset(self):
+        value = "x" * 1_000_000
+        self.assertEqual((None, None, True), _diff_position_at_offset(value, 1))
+
+    @patch("local_ai._git_output")
+    def test_every_context_chunk_fits_conservative_token_budget(self, git_output):
+        git_output.return_value = (
+            "diff --git a/sample.py b/sample.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+" + ("x" * 50_000) + "\n"
+        )
+        prompt = "Review this patch."
+        result = collect_context("main", prompt)
+        budget = calculate_token_budget(
+            system_prompt=REVIEW_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            context_window=NUM_CTX,
+            output_reserve=NUM_PREDICT,
+            safety_ratio=0.90,
+        )
+        self.assertTrue(result.truncated)
+        self.assertTrue(all(
+            estimate_tokens_upper_bound(chunk.text) <= budget.diff_token_budget
+            for chunk in result.chunks
+        ))
+
 
     def test_direct_test_execution_includes_all_regression_classes(self):
         source = Path(__file__).read_text(encoding="utf-8")
