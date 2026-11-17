@@ -16,6 +16,20 @@ class RedactionTests(unittest.TestCase):
     def test_secret_assignment_is_redacted(self):
         self.assertEqual("api_key=[REDACTED]", redact_secrets("api_key=abc123"))
 
+    def test_quoted_json_key_and_value_are_redacted(self):
+        value = '{"password": "a sensitive value with spaces"}'
+        self.assertEqual('{"password": [REDACTED]}', redact_secrets(value))
+        self.assertNotIn("a sensitive value", redact_secrets(value))
+
+    def test_quoted_value_with_spaces_is_redacted(self):
+        value = 'password="a sensitive value with spaces"'
+        self.assertEqual("password=[REDACTED]", redact_secrets(value))
+        self.assertNotIn("a sensitive value", redact_secrets(value))
+
+    def test_single_quoted_json_secret_is_redacted(self):
+        value = "{'client_secret': 'sensitive value'}"
+        self.assertEqual("{'client_secret': [REDACTED]}", redact_secrets(value))
+
 
 class ContextBoundsTests(unittest.TestCase):
     def test_context_limit_is_fixed(self):
