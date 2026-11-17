@@ -130,7 +130,7 @@ Runtime behavior is unknown.
 ## Tests Needed
 Add a response-close test.
 """
-        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n+with urllib.request.urlopen(request) as response:"
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\n+with urllib.request.urlopen(request) as response:"
         self.assertFalse(validate_review_output(
             review, diff_context=diff, expected_path="workbench/local_ai.py"
         ))
@@ -152,7 +152,7 @@ Runtime behavior is unknown.
 ## Tests Needed
 Add a response-close test.
 """
-        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n+with urllib.request.urlopen(request) as response:"
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\n+with urllib.request.urlopen(request) as response:"
         self.assertFalse(validate_review_output(
             review, diff_context=diff, expected_path="workbench/local_ai.py"
         ))
