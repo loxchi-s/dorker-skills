@@ -36,9 +36,16 @@ jobs:
       prompt: "Review correctness, security, performance, and missing tests."
 ```
 
-The reusable workflow checks out the caller repository, then clones this public repository
-without credentials to obtain the runner script. The caller must allow reusable workflows
-from `loxchi-s/dorker-skills` under its Actions settings. For private repositories, confirm GitHub's reusable-workflow access policy.
+The reusable workflow checks out the caller repository only as Git data, then clones the
+reviewer implementation from the trusted `main` branch of this public repository without
+credentials. The Python tests and inference client are executed from that trusted checkout,
+not from the pull request under review. The PR checkout is used only to calculate the diff;
+its scripts, tests, and other files are not executed by the reviewer.
+
+The caller must allow reusable workflows from `loxchi-s/dorker-skills` under its Actions
+settings. For private repositories, confirm GitHub's reusable-workflow access policy.
+The upstream `main` branch and the workflow definition/actions are part of the trusted
+computing base; protect them with review and branch rules.
 
 ## Resource profile
 
@@ -54,14 +61,20 @@ from `loxchi-s/dorker-skills` under its Actions settings. For private repositori
 ## Security boundaries
 
 - `contents: read`; checkout does not persist credentials.
-- No secrets are passed to the model container.
-- Pull request content is treated as untrusted text; no PR code is executed by the model job.
+- No repository secrets are passed to the model container.
+- Pull request content is treated as untrusted Git data. The reviewer computes a textual diff
+  and does not execute PR-provided scripts, tests, or binaries.
+- The reviewer implementation and its unit tests are loaded from upstream `main`, not from
+  the branch being reviewed. The upstream branch and workflow/actions therefore remain trusted
+  dependencies and must be protected accordingly.
 - Common credential patterns and PEM private-key blocks are redacted before inference. This
   is best-effort redaction, not a guarantee; never commit secrets to a repository.
 - The model container has bounded CPU, memory and process count. It requires network access
   to download the container image and model weights.
 - The workflow uses a versioned container tag, not a digest pin. Pin a verified image digest
   before treating this as a hardened supply-chain deployment.
+- Reports are written to the runner's temporary directory, never to a pre-existing file in the
+  caller checkout. Missing reports are ignored on upload.
 - No automatic retries for inference; rerun the failed workflow manually.
 
 ## Status
