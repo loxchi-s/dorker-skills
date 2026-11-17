@@ -32,23 +32,23 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout caller repository
+      - name: Checkout caller repository as untrusted Git data
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout public Workbench implementation
-        env:
-          WORKBENCH_REF: ${{ github.repository == 'loxchi-s/dorker-skills' && (github.event_name == 'pull_request' && github.head_ref || github.ref_name) || 'main' }}
-        run: git clone --depth 1 --branch="$WORKBENCH_REF" https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
+      # Always load the reviewer implementation from the trusted upstream default branch.
+      # Never execute Python, tests, or scripts supplied by the pull request being reviewed.
+      - name: Checkout trusted Workbench implementation
+        run: git clone --depth 1 --branch=main https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Unit test local inference client
+      - name: Unit test trusted inference client
         working-directory: ${{ runner.temp }}/dorker-workbench/workbench
         run: python -m unittest -v
 
@@ -70,17 +70,18 @@ jobs:
         env:
           LOCAL_AI_PROMPT: ${{ inputs.prompt || 'Review this change for correctness, security, reliability, and missing tests.' }}
           LOCAL_AI_MODEL: qwen2.5:1.5b
-          LOCAL_AI_REPORT: local-ai-report.md
+          LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
+          GITHUB_BASE_REF: ${{ github.base_ref }}
         run: python "$RUNNER_TEMP/dorker-workbench/workbench/local_ai.py"
 
       - name: Upload review report
-        if: always() && hashFiles('local-ai-report.md') != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: local-ai-review-${{ github.run_id }}
-          path: local-ai-report.md
-          if-no-files-found: error
+          path: ${{ runner.temp }}/local-ai-report.md
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Stop local model container
