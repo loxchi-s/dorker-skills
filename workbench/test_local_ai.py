@@ -345,7 +345,7 @@ class ContextBoundsTests(unittest.TestCase):
         self.assertFalse(context.truncated)
         self.assertEqual(
             "界" * MAX_CONTEXT_BYTES,
-            "".join(chunk.text.split("\\n", 1)[-1] for chunk in context.chunks),
+            "".join(chunk.text.split("\n", 1)[-1] for chunk in context.chunks),
         )
 
 
@@ -364,9 +364,9 @@ class PerFileChunkingTests(unittest.TestCase):
 
     @patch("local_ai._git_output")
     def test_collect_context_splits_large_file_and_reviews_later_files(self, git_output):
-        first = "diff --git a/large.py b/large.py\\n" + ("x" * (MAX_CONTEXT_BYTES + 100))
-        second = "diff --git a/next.py b/next.py\\n+next"
-        git_output.return_value = first + "\\n" + second
+        first = "diff --git a/large.py b/large.py\n" + ("x" * (MAX_CONTEXT_BYTES + 100))
+        second = "diff --git a/next.py b/next.py\n+next"
+        git_output.return_value = first + "\n" + second
         result = collect_context("main")
         self.assertFalse(result.truncated)
         large_chunks = [chunk for chunk in result.chunks if chunk.path == "large.py"]
@@ -375,16 +375,16 @@ class PerFileChunkingTests(unittest.TestCase):
         self.assertEqual(1, len(next_chunks))
         self.assertTrue(all(not chunk.truncated for chunk in result.chunks))
         self.assertIn("x" * (MAX_CONTEXT_BYTES + 100), "".join(
-            chunk.text.split("\\n", 1)[-1] for chunk in large_chunks
+            chunk.text.split("\n", 1)[-1] for chunk in large_chunks
         ))
         self.assertEqual(0, result.omitted_files)
         self.assertLessEqual(len(result.text.encode("utf-8")), MAX_TOTAL_CONTEXT_BYTES)
 
     @patch("local_ai._git_output")
     def test_collect_context_marks_file_incomplete_when_chunk_count_exhausted(self, git_output):
-        huge = "diff --git a/huge.py b/huge.py\\n" + ("z" * (MAX_CONTEXT_BYTES * (MAX_REVIEW_CHUNKS + 1)))
-        later = "diff --git a/later.py b/later.py\\n+later"
-        git_output.return_value = huge + "\\n" + later
+        huge = "diff --git a/huge.py b/huge.py\n" + ("z" * (MAX_CONTEXT_BYTES * (MAX_REVIEW_CHUNKS + 1)))
+        later = "diff --git a/later.py b/later.py\n+later"
+        git_output.return_value = huge + "\n" + later
         result = collect_context("main")
         self.assertTrue(result.truncated)
         self.assertGreaterEqual(result.omitted_files, 1)
