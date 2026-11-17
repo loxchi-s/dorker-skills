@@ -677,6 +677,45 @@ Add a regression test.
 
 
 class CodeRabbitRegressionTests(unittest.TestCase):
+    def test_secret_assignment_does_not_consume_following_diff_line(self):
+        diff = "+TOKEN=\n+TIMEOUT=30\n+RETRY_COUNT=3\n+token=abc123\n"
+        redacted = redact_secrets(diff)
+        self.assertIn("+TIMEOUT=30", redacted)
+        self.assertIn("+RETRY_COUNT=3", redacted)
+        self.assertNotIn("abc123", redacted)
+        self.assertEqual(diff.count("\\n"), redacted.count("\\n"))
+
+    def test_no_actionable_verdict_rejects_structured_finding_fields(self):
+        review = """## Verdict
+NO_ACTIONABLE_FINDINGS
+## Findings
+No actionable findings were identified.
+- Severity: High
+- File: sample.py:1
+- Evidence: a sufficiently long changed line
+- Impact: The issue is exploitable.
+- Fix: Validate the input.
+## Risks and Unknowns
+Unknown
+## Tests Needed
+Add a regression test.
+"""
+        self.assertFalse(validate_review_output(review))
+
+    def test_git_quoted_path_decodes_spaces_and_utf8(self):
+        token = '"b/my file\\\\303\\\\251.py"'
+        self.assertEqual("my fileé.py", _decode_git_path(token))
+
+    def test_collect_context_parses_quoted_git_path(self):
+        diff = (
+            'diff --git "a/my file\\\\303\\\\251.py" "b/my file\\\\303\\\\251.py"\\n'
+            "@@ -0,0 +1,1 @@\\n+dangerous_call_with_context();\\n"
+        )
+        with patch("local_ai._git_output", return_value=diff):
+            result = collect_context("main")
+        self.assertEqual("my fileé.py", result.chunks[0].path)
+
+
     def test_second_segment_keeps_hunk_line_coordinates(self):
         diff = "diff --git a/sample.py b/sample.py\n@@ -10,2 +10,2 @@\n a\n+b\n c\n"
         second_offset = diff.index(" c\n")
