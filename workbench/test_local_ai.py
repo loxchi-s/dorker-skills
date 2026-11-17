@@ -433,7 +433,7 @@ class ContextBoundsTests(unittest.TestCase):
         self.assertFalse(context.truncated)
         self.assertEqual(
             "界" * MAX_CONTEXT_BYTES,
-            "".join(chunk.text.split("\n", 1)[-1] for chunk in context.chunks),
+            "".join(chunk.text.split("\n", 2)[-1] for chunk in context.chunks),
         )
 
 
@@ -463,7 +463,7 @@ class PerFileChunkingTests(unittest.TestCase):
         self.assertEqual(1, len(next_chunks))
         self.assertTrue(all(not chunk.truncated for chunk in result.chunks))
         self.assertIn("x" * (MAX_CONTEXT_BYTES + 100), "".join(
-            chunk.text.split("\n", 1)[-1] for chunk in large_chunks
+            chunk.text.split("\n", 2)[-1] for chunk in large_chunks
         ))
         self.assertEqual(0, result.omitted_files)
         self.assertLessEqual(len(result.text.encode("utf-8")), MAX_TOTAL_CONTEXT_BYTES)
@@ -477,7 +477,7 @@ class PerFileChunkingTests(unittest.TestCase):
         git_output.return_value = diff
         result = collect_context("main")
         self.assertGreater(len(result.chunks), 1)
-        segments = [chunk.text.split("\n", 1)[-1] for chunk in result.chunks]
+        segments = [chunk.text.split("\n", 2)[-1] for chunk in result.chunks]
         self.assertTrue(all(segment.endswith("\n") for segment in segments[:-1]))
 
     @patch("local_ai._git_output")
@@ -608,12 +608,12 @@ if __name__ == "__main__":
 
 class CodeRabbitRegressionTests(unittest.TestCase):
     def test_second_segment_keeps_hunk_line_coordinates(self):
-        diff = "diff --git a/sample.py b/sample.py\\n@@ -10,2 +10,2 @@\\n a\\n+b\\n c\\n"
-        second_offset = diff.index(" c\\n")
-        self.assertEqual((12, 12, False), _diff_position_at_offset(diff, second_offset))
+        diff = "diff --git a/sample.py b/sample.py\n@@ -10,2 +10,2 @@\n a\n+b\n c\n"
+        second_offset = diff.index(" c\n")
+        self.assertEqual((11, 11, False), _diff_position_at_offset(diff, second_offset))
 
     def test_validator_rejects_line_number_outside_changed_hunk(self):
-        diff = "File: sample.py\\n@@ -10,1 +10,1 @@\\n-old_value\\n+new_value\\n"
+        diff = "File: sample.py\n@@ -10,1 +10,1 @@\n-old_value\n+new_value\n"
         review = """## Verdict
 REVIEW_REQUIRED
 ## Findings
@@ -632,7 +632,7 @@ Add regression test
     def test_validator_accepts_backticks_inside_changed_line_evidence(self):
         tick = chr(96)
         changed = "const command = " + tick + "rm -rf ${target}" + tick + ";"
-        diff = "File: sample.py\\n@@ -1,1 +1,1 @@\\n-old\\n+" + changed + "\\n"
+        diff = "File: sample.py\n@@ -1,1 +1,1 @@\n-old\n+" + changed + "\n"
         review = """## Verdict
 REVIEW_REQUIRED
 ## Findings
