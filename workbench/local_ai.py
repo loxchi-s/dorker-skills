@@ -82,7 +82,7 @@ REVIEW_SYSTEM_PROMPT = (
 )
 
 _SECRET_ASSIGNMENT = re.compile(
-    r"""(?i)(["']?(?:api[_-]?key|access[_-]?token|client[_-]?secret|password|secret)["']?\s*[:=]\s*)"""
+    r"""(?i)(["']?(?:api[_-]?key|access[_-]?key|aws_access_key_id|aws_secret_access_key|client[_-]?secret|secret(?:[_-][a-z0-9]+)*|auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|private[_-]?key|auth[_-]?config)["']?\s*[:=]\s*)"""
     r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)"""
 )
 
@@ -97,6 +97,11 @@ def redact_secrets(value: str) -> str:
     )
     value = re.sub(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\b", "[REDACTED GITHUB TOKEN]", value)
     value = re.sub(r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED AWS ACCESS KEY]", value)
+    value = re.sub(
+        r"(?i)\b(Bearer|Basic)[ \t]+[A-Za-z0-9._~+/=-]+",
+        r"\1 [REDACTED]",
+        value,
+    )
     return _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
 
 
