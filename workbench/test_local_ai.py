@@ -24,6 +24,13 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("ghp_", redact_secrets(value))
         self.assertIn("[REDACTED", redact_secrets(value))
 
+    def test_fine_grained_github_pat_in_bearer_header_is_redacted(self):
+        token = "github_pat_" + "A" *  forty
+        value = f"Authorization: Bearer {token}"
+        redacted = redact_secrets(value)
+        self.assertNotIn(token, redacted)
+        self.assertIn("[REDACTED GITHUB TOKEN]", redacted)
+
     def test_private_key_is_redacted(self):
         value = "-----BEGIN PRIVATE KEY-----\\nsecret\\n-----END PRIVATE KEY-----"
         self.assertNotIn("secret", redact_secrets(value))
