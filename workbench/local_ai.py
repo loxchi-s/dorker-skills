@@ -263,7 +263,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
 
         # Reserve room for the longest segment label and the actual path.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/999\\nPosition old=999999 new=999999 continuation=1\\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
         )
         segment_budget = MAX_CONTEXT_BYTES - label_budget
         if segment_budget <= 0:
@@ -277,13 +277,13 @@ def collect_context(base_ref: str = "") -> ContextResult:
         for segment_index, segment in enumerate(raw_segments, start=1):
             old_position, new_position, continuation = _diff_position_at_offset(file_diff, consumed_chars)
             position = (
-                f"@@ -{old_position} +{new_position} @@\\n"
+                f"@@ -{old_position} +{new_position} @@\n"
                 if old_position is not None and new_position is not None
                 else ""
             )
             if continuation:
-                position += "# continuation of a split diff line\\n"
-            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
+                position += "# continuation of a split diff line\n"
+            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
             prepared.append(
                 ContextChunk(path=file_path, text=label + position + segment, truncated=False)
             )
@@ -340,7 +340,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
             )
         )
 
-    combined_text = "\\n\\n".join(chunk.text for chunk in chunks)
+    combined_text = "\n\n".join(chunk.text for chunk in chunks)
     truncated = omitted_files > 0 or any(chunk.truncated for chunk in chunks)
     return ContextResult(
         text=combined_text,
