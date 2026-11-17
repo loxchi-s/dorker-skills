@@ -375,7 +375,12 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
         prepared: list[ContextChunk] = []
         consumed_chars = 0
         for segment_index, segment in enumerate(raw_segments, start=1):
-            old_position, new_position, continuation, continuation_marker = (\n                _diff_position_and_marker_at_offset(file_diff, consumed_chars)\n            )
+            (
+                old_position,
+                new_position,
+                continuation,
+                continuation_marker,
+            ) = _diff_position_and_marker_at_offset(file_diff, consumed_chars)
             position = (
                 f"@@ -{old_position} +{new_position} @@\n"
                 if old_position is not None and new_position is not None
