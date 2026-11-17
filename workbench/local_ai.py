@@ -23,6 +23,12 @@ NUM_PREDICT = 768
 
 
 @dataclass(frozen=True)
+class ContextResult:
+    text: str
+    truncated: bool
+
+
+@dataclass(frozen=True)
 class ModelResponse:
     text: str
     done_reason: str | None
@@ -78,7 +84,7 @@ def _git_output(args: list[str], timeout: int = 30) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
-def collect_context(base_ref: str = "") -> str:
+def collect_context(base_ref: str = "") -> ContextResult:
     if base_ref:
         raw = _git_output(
             ["diff", "--no-ext-diff", "--no-color", "--unified=2", f"origin/{base_ref}...HEAD"]
@@ -90,8 +96,13 @@ def collect_context(base_ref: str = "") -> str:
     if not raw.strip():
         raw = "No textual diff found. Review request and repository metadata only."
     safe = redact_secrets(raw)
-    encoded = safe.encode("utf-8")[:MAX_CONTEXT_BYTES]
-    return encoded.decode("utf-8", errors="ignore")
+    safe_bytes = safe.encode("utf-8")
+    truncated = len(safe_bytes) > MAX_CONTEXT_BYTES
+    encoded = safe_bytes[:MAX_CONTEXT_BYTES]
+    return ContextResult(
+        text=encoded.decode("utf-8", errors="ignore"),
+        truncated=truncated,
+    )
 
 
 def ask_model(model: str, prompt: str, context: str) -> ModelResponse:
@@ -180,22 +191,42 @@ def validate_review_output(review: str) -> bool:
         return True
 
     required_fields = ("Severity", "File", "Evidence", "Impact", "Fix")
-    field_values = {
-        field: re.search(
-            rf"(?im)^\s*(?:[-*]\s*)?{field}\s*:\s*(.+?)\s*$", findings
-        )
-        for field in required_fields
-    }
-    if any(match is None or not match.group(1).strip() for match in field_values.values()):
-        return False
-    if field_values["Severity"].group(1).strip().lower() not in {
-        "critical", "high", "medium", "low"
-    }:
-        return False
-    return re.search(
-        r"(?im)^\s*(?:[-*]\s*)?File\s*:\s*[^\s]+?(?::|,\s*line\s+)\s*\d+",
-        findings,
-    ) is not None
+    field_pattern = re.compile(
+        r"^[ \\t]*(?:[-*][ \\t]*)?(Severity|File|Evidence|Impact|Fix)[ \\t]*:[ \\t]*(.*?)[ \\t]*$",
+        re.IGNORECASE,
+    )
+    file_line_pattern = re.compile(r"^[^\\s]+?(?::|,\\s*line\\s+)\\d+$", re.IGNORECASE)
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in findings.splitlines():
+        starts_heading = re.match(r"^[ \\t]*#{3,6}[ \\t]+", line) is not None
+        starts_finding = re.match(
+            r"^[ \\t]*(?:[-*][ \\t]*)?Severity[ \\t]*:", line, re.IGNORECASE
+        ) is not None
+        if current and (starts_heading or starts_finding):
+            blocks.append(current)
+            current = []
+        current.append(line)
+    if current:
+        blocks.append(current)
+
+    validated_findings = 0
+    for block in blocks:
+        values: dict[str, str] = {}
+        for line in block:
+            match = field_pattern.match(line)
+            if match:
+                values[match.group(1).title()] = match.group(2).strip()
+        if not values:
+            continue
+        validated_findings += 1
+        if any(not values.get(field) for field in required_fields):
+            return False
+        if values["Severity"].lower() not in {"critical", "high", "medium", "low"}:
+            return False
+        if file_line_pattern.fullmatch(values["File"]) is None:
+            return False
+    return validated_findings > 0
 
 
 def incomplete_review_report(review: str, reason: str) -> str:
@@ -227,10 +258,23 @@ def main() -> int:
     started = time.monotonic()
 
     try:
-        context = collect_context(base_ref)
-        model_result = ask_model(model, prompt, context)
+        context_result = collect_context(base_ref)
+        review_prompt = prompt
+        if context_result.truncated:
+            review_prompt += (
+                "\nThe supplied diff context was truncated at the configured byte limit. "
+                "You did not receive the complete diff. Do not return NO_ACTIONABLE_FINDINGS; "
+                "report the review as INCOMPLETE and identify this coverage limitation."
+            )
+        model_result = ask_model(model, review_prompt, context_result.text)
         review = model_result.text
         incomplete_reason = model_response_incomplete_reason(model_result)
+        if context_result.truncated:
+            truncation_reason = (
+                f"Diff context exceeded {MAX_CONTEXT_BYTES} UTF-8 bytes and was truncated; "
+                "the model did not receive the complete diff."
+            )
+            incomplete_reason = f"{incomplete_reason} {truncation_reason}".strip()
         if incomplete_reason or not validate_review_output(review):
             if not incomplete_reason:
                 incomplete_reason = "The model response did not satisfy the evidence-based review contract."
@@ -246,7 +290,8 @@ def main() -> int:
         f"- Event: `{os.environ.get('GITHUB_EVENT_NAME', 'local')}`\n"
         f"- Workflow commit: `{os.environ.get('GITHUB_SHA', 'unknown')}`\n"
         f"- PR head commit: `{os.environ.get('GITHUB_PR_HEAD_SHA', 'unknown')}`\n"
-        f"- Context bytes: `{len(context.encode('utf-8'))}`\n"
+        f"- Context bytes: `{len(context_result.text.encode('utf-8'))}`\n"
+        f"- Context truncated: `{str(context_result.truncated).lower()}`\n"
         f"- Context window: `{NUM_CTX}` tokens\n"
         f"- Output token budget: `{NUM_PREDICT}` tokens\n"
         f"- Prompt tokens evaluated: `{model_result.prompt_eval_count if model_result.prompt_eval_count is not None else 'unknown'}`\n"
