@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from local_ai import MAX_CONTEXT_BYTES, collect_context, redact_secrets
 
@@ -10,7 +11,7 @@ class RedactionTests(unittest.TestCase):
         self.assertIn("[REDACTED", redact_secrets(value))
 
     def test_private_key_is_redacted(self):
-        value = "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
+        value = "-----BEGIN PRIVATE KEY-----\\nsecret\\n-----END PRIVATE KEY-----"
         self.assertNotIn("secret", redact_secrets(value))
 
     def test_secret_assignment_is_redacted(self):
@@ -37,6 +38,12 @@ class ContextBoundsTests(unittest.TestCase):
 
     def test_collect_context_returns_text(self):
         self.assertIsInstance(collect_context(), str)
+
+    @patch("local_ai._git_output")
+    def test_collect_context_enforces_utf8_byte_limit(self, git_output):
+        git_output.return_value = "界" * MAX_CONTEXT_BYTES
+        context = collect_context("main")
+        self.assertLessEqual(len(context.encode("utf-8")), MAX_CONTEXT_BYTES)
 
 
 if __name__ == "__main__":
