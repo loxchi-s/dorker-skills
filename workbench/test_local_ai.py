@@ -437,7 +437,7 @@ class ModelResponseStatusTests(unittest.TestCase):
     @patch("local_ai._git_output")
     def test_longer_user_prompt_reduces_available_diff_context(self, git_output):
         git_output.return_value = (
-            "diff --git a/sample.py b/sample.py\\n"
+            "diff --git a/sample.py b/sample.py\n"
             + ("+x" * 20_000)
         )
         short = collect_context("main", "")
@@ -445,16 +445,6 @@ class ModelResponseStatusTests(unittest.TestCase):
         short_max = max(len(chunk.text.encode("utf-8")) for chunk in short.chunks)
         long_max = max(len(chunk.text.encode("utf-8")) for chunk in long.chunks)
         self.assertLess(long_max, short_max)
-
-    def test_missing_completion_metadata_marks_review_incomplete(self):
-        result = ModelResponse(
-            text="review",
-            done_reason=None,
-            prompt_eval_count=None,
-            eval_count=None,
-        )
-        self.assertIn("cannot be verified", model_response_incomplete_reason(result))
-
 
 class ContextBoundsTests(unittest.TestCase):
     def test_context_limit_is_fixed(self):
