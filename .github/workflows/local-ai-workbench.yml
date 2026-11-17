@@ -32,7 +32,7 @@ concurrency:
 jobs:
   local-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:

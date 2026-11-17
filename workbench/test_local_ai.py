@@ -667,7 +667,7 @@ Run relevant unit tests.
         report = build_aggregate_report((complete, incomplete), omitted_files=1)
         self.assertIn("INCOMPLETE", report)
         self.assertIn("large.py", report)
-        self.assertIn("additional file(s) were not reviewed", report)
+        self.assertIn("file(s) had one or more segments omitted", report)
 
     def test_aggregate_preserves_findings_without_markdown_hash_headings(self):
         finding = """Verdict:
@@ -1011,7 +1011,7 @@ Add a path-with-spaces regression test.
                 "LOCAL_AI_PROMPT": "界" * 3_000,
                 "LOCAL_AI_REPORT": str(report),
             }, clear=False):
-                self.assertEqual(0, main())
+                self.assertEqual(2, main())
             content = report.read_text(encoding="utf-8")
             self.assertIn("INCOMPLETE", content)
             self.assertIn("Context budget rejected before inference", content)

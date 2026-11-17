@@ -21,9 +21,9 @@ from token_budget import calculate_token_budget, estimate_tokens_upper_bound
 MAX_CONTEXT_BYTES = 6_000
 MAX_TOTAL_CONTEXT_BYTES = 96_000
 MAX_REVIEW_FILES = 16
-MAX_REVIEW_CHUNKS = 16
+MAX_REVIEW_CHUNKS = 24
 MAX_RAW_OUTPUT_CHARS = 12_000
-MAX_REVIEW_SECONDS = 14 * 60
+MAX_REVIEW_SECONDS = 25 * 60
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 NUM_CTX = 8192
@@ -821,7 +821,7 @@ def build_aggregate_report(
                 sections.extend(["", f"#### {heading} — {item.path}", detail])
 
     if omitted_files:
-        sections.extend(["", f"{omitted_files} additional file(s) were not reviewed due to configured bounds."])
+        sections.extend(["", f"{omitted_files} file(s) had one or more segments omitted or were excluded by configured bounds."])
     sections.extend(["", "## Risks and Unknowns"])
     sections.append(
         "The review did not cover every changed file completely or one or more model responses failed the completion/evidence contract."
@@ -901,12 +901,12 @@ def main() -> int:
         f"- Workflow commit: {os.environ.get('GITHUB_SHA', 'unknown')}\n"
         f"- PR head commit: {os.environ.get('GITHUB_PR_HEAD_SHA', 'unknown')}\n"
         f"- Changed file chunks reviewed: {len(context_result.chunks)}\n"
-        f"- Additional files omitted by bounds: {context_result.omitted_files}\n"
+        f"- File plans with omitted segments or excluded files: {context_result.omitted_files}\n"
         f"- Context bytes supplied: {len(context_result.text.encode('utf-8'))}\n"
         f"- Context truncated: {str(context_result.truncated).lower()}\n"
         f"- Per-file context limit: {MAX_CONTEXT_BYTES} UTF-8 bytes\n"
         f"- Total context limit: {MAX_TOTAL_CONTEXT_BYTES} UTF-8 bytes\n"
-        f"- Maximum files: {MAX_REVIEW_FILES}\n"
+        f"- Maximum files: {MAX_REVIEW_FILES}\n"        f"- Maximum review chunks: {MAX_REVIEW_CHUNKS}\n"
         f"- Context window per request: {NUM_CTX} tokens\n"
         f"- Input safety ceiling: {CONTEXT_SAFETY_RATIO:.0%} ({int(NUM_CTX * CONTEXT_SAFETY_RATIO)} tokens)\n"
         f"- Effective input limit after output reserve: {min(int(NUM_CTX * CONTEXT_SAFETY_RATIO), NUM_CTX - NUM_PREDICT)} tokens\n"
@@ -924,7 +924,7 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"Report written to {report_path}")
-    return 0
+    return 2 if _review_verdict(review) == "INCOMPLETE" else 0
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -57,10 +57,12 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - Ollama container: capped at 2 CPU cores, 4 GiB RAM, and 256 processes.
 - Model: qwen2.5:1.5b; model weights are downloaded on each fresh runner unless a cache is
   added later. No GPU is requested.
-- Job timeout: 25 minutes; model review is split into diff chunks capped at 6,000 UTF-8
+- Job timeout: 40 minutes; model review is split into diff chunks capped at 6,000 UTF-8
   bytes per chunk and 96,000 UTF-8 bytes total. A single changed file can span multiple chunks;
-  at most 16 changed files and 16 review chunks are processed. The review inference phase
-  has a 14-minute total budget and each model request has a maximum 120-second timeout.
+  at most 16 changed files and 24 review chunks are processed. The review inference phase
+  has a 25-minute total budget and each model request has a maximum 120-second timeout.
+  The workflow step fails after writing and uploading the report whenever the aggregate verdict
+  is INCOMPLETE; artifact upload and container cleanup still run.
   Each request uses an 8,192-token context window and reserves up to 1,536 output tokens.
   The input ceiling is 90% of the configured context window, further reduced when necessary
   to preserve the output reserve. A conservative UTF-8 byte upper-bound estimator plus a
@@ -96,10 +98,11 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - **Durability and cleanup:** reports are uploaded with a run-specific name and seven-day
   retention. The Ollama container is removed in an always-run cleanup step. Runner-local state
   is otherwise disposable; no result is written back to the caller repository.
-- **Resource bounds:** at most 16 changed files, 16 review chunks, 6,000 UTF-8 bytes per chunk, 96,000 bytes total,
-  14 minutes of inference time, and 120 seconds per model request. The GitHub job timeout is
-  25 minutes. Exceeding a review bound is reported as incomplete, not silently treated as a
-  complete review.
+- **Resource bounds:** at most 16 changed files, 24 review chunks, 6,000 UTF-8 bytes per chunk, 96,000 bytes total,
+  25 minutes of inference time, and 120 seconds per model request. The GitHub job timeout is
+  40 minutes. Exceeding a review bound is reported as incomplete, not silently treated as a
+  complete review. The workflow check fails closed on an INCOMPLETE verdict after preserving
+  the report artifact and cleaning up the model container.
 
 ## Security boundaries
 
