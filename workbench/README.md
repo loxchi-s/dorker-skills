@@ -65,7 +65,7 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
   The input ceiling is 90% of the configured context window, further reduced when necessary
   to preserve the output reserve. A conservative UTF-8 byte upper-bound estimator plus a
   128-token framing reserve rejects oversized requests before inference; this is not an exact
-  model tokenizer. Actual \`prompt_eval_count\` and \`done_reason\` are checked after inference.
+  model tokenizer. Actual `prompt_eval_count` and `done_reason` are checked after inference.
   Any truncated, skipped, timed-out, oversized, output-limited, or invalid chunk forces the
   aggregate report verdict to INCOMPLETE.
 - Reports include Ollama's `prompt_eval_count`, `eval_count`, and `done_reason`. The report is
