@@ -683,7 +683,7 @@ class CodeRabbitRegressionTests(unittest.TestCase):
         self.assertIn("+TIMEOUT=30", redacted)
         self.assertIn("+RETRY_COUNT=3", redacted)
         self.assertNotIn("abc123", redacted)
-        self.assertEqual(diff.count("\\n"), redacted.count("\\n"))
+        self.assertEqual(diff.count("\n"), redacted.count("\n"))
 
     def test_no_actionable_verdict_rejects_structured_finding_fields(self):
         review = """## Verdict
