@@ -116,13 +116,47 @@ def collect_context(base_ref: str = "") -> ContextResult:
         )
     if not raw.strip():
         raw = "No textual diff found. Review request and repository metadata only."
+
     safe = redact_secrets(raw)
-    safe_bytes = safe.encode("utf-8")
-    truncated = len(safe_bytes) > MAX_CONTEXT_BYTES
-    encoded = safe_bytes[:MAX_CONTEXT_BYTES]
+    sections = re.split(r"(?m)(?=^diff --git )", safe)
+    file_diffs = [section for section in sections if section.startswith("diff --git ")]
+    if not file_diffs:
+        file_diffs = [safe]
+
+    chunks: list[ContextChunk] = []
+    remaining_bytes = MAX_TOTAL_CONTEXT_BYTES
+    omitted_files = 0
+
+    for index, file_diff in enumerate(file_diffs):
+        if index >= MAX_REVIEW_FILES or remaining_bytes <= 0:
+            omitted_files = len(file_diffs) - index
+            break
+
+        lines = file_diff.splitlines()
+        header = lines[0] if lines else ""
+        path_match = re.match(r"^diff --git a/.* b/(.*)$", header)
+        file_path = path_match.group(1) if path_match else "(diff)"
+        allowed_bytes = min(MAX_CONTEXT_BYTES, remaining_bytes)
+        encoded = file_diff.encode("utf-8")
+        was_truncated = len(encoded) > allowed_bytes
+        chunk_text = encoded[:allowed_bytes].decode("utf-8", errors="ignore")
+        chunks.append(ContextChunk(path=file_path, text=chunk_text, truncated=was_truncated))
+        remaining_bytes -= len(chunk_text.encode("utf-8"))
+
+        if was_truncated:
+            omitted_files = len(file_diffs) - index - 1
+            break
+
+    if not chunks:
+        chunks.append(ContextChunk(path="(diff)", text="", truncated=True))
+
+    combined_text = "\n\n".join(chunk.text for chunk in chunks)
+    truncated = omitted_files > 0 or any(chunk.truncated for chunk in chunks)
     return ContextResult(
-        text=encoded.decode("utf-8", errors="ignore"),
+        text=combined_text,
         truncated=truncated,
+        chunks=tuple(chunks),
+        omitted_files=omitted_files,
     )
 
 
