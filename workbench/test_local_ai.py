@@ -26,6 +26,7 @@ from local_ai import (
     validate_review_output,
     _diff_position_at_offset,
     _changed_diff_lines,
+    _decode_git_path,
 )
 
 
