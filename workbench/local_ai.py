@@ -195,7 +195,7 @@ def validate_review_output(review: str) -> bool:
         r"^[ \t]*(?:[-*][ \t]*)?(Severity|File|Evidence|Impact|Fix)[ \t]*:[ \t]*(.*?)[ \t]*$",
         re.IGNORECASE,
     )
-    file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\\d+$", re.IGNORECASE)
+    file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\d+$", re.IGNORECASE)
     blocks: list[list[str]] = []
     current: list[str] = []
     for line in findings.splitlines():
