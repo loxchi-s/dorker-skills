@@ -769,9 +769,9 @@ Add a regression test.
 
     def test_fallback_git_show_disables_color_output(self):
         diff = (
-            "diff --git a/sample.py b/sample.py\\n"
-            "@@ -0,0 +1,1 @@\\n"
-            "+dangerous_call_with_context();\\n"
+            "diff --git a/sample.py b/sample.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+dangerous_call_with_context();\n"
         )
         with patch("local_ai._git_output", return_value=diff) as git_output:
             collect_context("", "Review this patch.")
@@ -802,11 +802,11 @@ Add a regression test.
         for marker, fragment, expected in cases:
             with self.subTest(marker=marker):
                 diff = (
-                    "File: sample.py\\n"
-                    "@@ -10,2 +20,2 @@\\n"
-                    f"# continuation of a split diff line; marker={marker}\\n"
-                    f"{fragment}\\n"
-                    "+next_added_source();\\n"
+                    "File: sample.py\n"
+                    "@@ -10,2 +20,2 @@\n"
+                    f"# continuation of a split diff line; marker={marker}\n"
+                    f"{fragment}\n"
+                    "+next_added_source();\n"
                 )
                 self.assertEqual(expected, _changed_diff_lines(diff))
 
@@ -814,9 +814,9 @@ Add a regression test.
         for marker in ("+", "-", " "):
             with self.subTest(marker=marker):
                 diff = (
-                    "diff --git a/sample.py b/sample.py\\n"
-                    "@@ -10,1 +20,1 @@\\n"
-                    f"{marker}source_line_that_is_long_enough();\\n"
+                    "diff --git a/sample.py b/sample.py\n"
+                    "@@ -10,1 +20,1 @@\n"
+                    f"{marker}source_line_that_is_long_enough();\n"
                 )
                 offset = diff.index("source_line") + 5
                 self.assertEqual(
