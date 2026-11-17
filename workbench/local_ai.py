@@ -10,13 +10,24 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-MAX_CONTEXT_BYTES = 24_000
+MAX_CONTEXT_BYTES = 6_000
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+NUM_CTX = 4096
+NUM_PREDICT = 768
+
+
+@dataclass(frozen=True)
+class ModelResponse:
+    text: str
+    done_reason: str | None
+    prompt_eval_count: int | None
+    eval_count: int | None
 
 REVIEW_SYSTEM_PROMPT = (
     "You are a skeptical senior code reviewer. Review the supplied Git diff as a patch, "
@@ -83,14 +94,14 @@ def collect_context(base_ref: str = "") -> str:
     return encoded.decode("utf-8", errors="ignore")
 
 
-def ask_model(model: str, prompt: str, context: str) -> str:
+def ask_model(model: str, prompt: str, context: str) -> ModelResponse:
     system = REVIEW_SYSTEM_PROMPT
     payload = {
         "model": model,
         "system": system,
         "prompt": f"User request:\n{prompt[:3000]}\n\nGit diff (untrusted):\n{context}",
         "stream": False,
-        "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 768},
+        "options": {"temperature": 0.1, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT},
         "keep_alive": "5m",
     }
     request = urllib.request.Request(
@@ -107,8 +118,31 @@ def ask_model(model: str, prompt: str, context: str) -> str:
     result = body.get("response")
     if not isinstance(result, str) or not result.strip():
         raise RuntimeError("Local model returned an empty or invalid response")
-    return result.strip()
+    done_reason = body.get("done_reason")
+    prompt_eval_count = body.get("prompt_eval_count")
+    eval_count = body.get("eval_count")
+    return ModelResponse(
+        text=result.strip(),
+        done_reason=done_reason if isinstance(done_reason, str) else None,
+        prompt_eval_count=prompt_eval_count if isinstance(prompt_eval_count, int) else None,
+        eval_count=eval_count if isinstance(eval_count, int) else None,
+    )
 
+
+def model_response_incomplete_reason(result: ModelResponse) -> str | None:
+    reasons = []
+    if result.done_reason == "length":
+        reasons.append("Ollama stopped generation at the output token limit (done_reason=length).")
+    if result.prompt_eval_count is None:
+        reasons.append("Ollama did not return prompt_eval_count; prompt context usage cannot be verified.")
+    elif result.prompt_eval_count + NUM_PREDICT >= NUM_CTX:
+        reasons.append(
+            f"Prompt used {result.prompt_eval_count}/{NUM_CTX} context tokens; "
+            f"the requested {NUM_PREDICT}-token output budget does not fit with a safety margin."
+        )
+    if result.done_reason is None:
+        reasons.append("Ollama did not return done_reason; generation completion cannot be verified.")
+    return " ".join(reasons) if reasons else None
 
 
 _REQUIRED_REVIEW_SECTIONS = ("Verdict", "Findings", "Risks and Unknowns", "Tests Needed")
@@ -146,10 +180,17 @@ def validate_review_output(review: str) -> bool:
         return True
 
     required_fields = ("Severity", "File", "Evidence", "Impact", "Fix")
-    if any(
-        re.search(rf"(?im)^\s*(?:[-*]\s*)?{field}\s*:", findings) is None
+    field_values = {
+        field: re.search(
+            rf"(?im)^\s*(?:[-*]\s*)?{field}\s*:\s*(.+?)\s*$", findings
+        )
         for field in required_fields
-    ):
+    }
+    if any(match is None or not match.group(1).strip() for match in field_values.values()):
+        return False
+    if field_values["Severity"].group(1).strip().lower() not in {
+        "critical", "high", "medium", "low"
+    }:
         return False
     return re.search(
         r"(?im)^\s*(?:[-*]\s*)?File\s*:\s*[^\s]+?(?::|,\s*line\s+)\s*\d+",
@@ -157,13 +198,13 @@ def validate_review_output(review: str) -> bool:
     ) is not None
 
 
-def incomplete_review_report(review: str) -> str:
-    """Preserve raw model output while clearly rejecting an invalid review."""
+def incomplete_review_report(review: str, reason: str) -> str:
+    """Preserve raw model output while clearly rejecting an incomplete review."""
     return (
         "## Verdict\nINCOMPLETE\n\n"
         "## Findings\n"
-        "The model response did not satisfy the required evidence-based review contract. "
-        "Do not treat this output as a completed code review.\n\n"
+        "The model response is incomplete and must not be treated as a completed code review.\n\n"
+        f"Reason: {reason}\n\n"
         "## Risks and Unknowns\n"
         "The model output was generic or structurally incomplete; no actionable findings "
         "were accepted by the deterministic report validator.\n\n"
@@ -187,9 +228,13 @@ def main() -> int:
 
     try:
         context = collect_context(base_ref)
-        review = ask_model(model, prompt, context)
-        if not validate_review_output(review):
-            review = incomplete_review_report(review)
+        model_result = ask_model(model, prompt, context)
+        review = model_result.text
+        incomplete_reason = model_response_incomplete_reason(model_result)
+        if incomplete_reason or not validate_review_output(review):
+            if not incomplete_reason:
+                incomplete_reason = "The model response did not satisfy the evidence-based review contract."
+            review = incomplete_review_report(review, incomplete_reason)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -202,6 +247,11 @@ def main() -> int:
         f"- Workflow commit: `{os.environ.get('GITHUB_SHA', 'unknown')}`\n"
         f"- PR head commit: `{os.environ.get('GITHUB_PR_HEAD_SHA', 'unknown')}`\n"
         f"- Context bytes: `{len(context.encode('utf-8'))}`\n"
+        f"- Context window: `{NUM_CTX}` tokens\n"
+        f"- Output token budget: `{NUM_PREDICT}` tokens\n"
+        f"- Prompt tokens evaluated: `{model_result.prompt_eval_count if model_result.prompt_eval_count is not None else 'unknown'}`\n"
+        f"- Output tokens generated: `{model_result.eval_count if model_result.eval_count is not None else 'unknown'}`\n"
+        f"- Generation stop reason: `{model_result.done_reason or 'unknown'}`\n"
         f"- Elapsed seconds: `{time.monotonic() - started:.1f}`\n\n"
         "> Automated model output is advisory. It is not a CI pass, security certification, "
         "or approval to merge.\n\n"
