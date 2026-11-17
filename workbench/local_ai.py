@@ -260,7 +260,10 @@ def collect_context(base_ref: str = "") -> ContextResult:
         lines = file_diff.splitlines()
         header = lines[0] if lines else ""
         path_match = re.match(
-            r'^diff --git ("(?:\\\\.|[^"\\\\])*"|\\S+) ("(?:\\\\.|[^"\\\\])*"|\\S+)
+            r'^diff --git ("(?:\\.|[^"\\])*"|\S+) ("(?:\\.|[^"\\])*"|\S+)$',
+            header,
+        )
+        file_path = _decode_git_path(path_match.group(2)) if path_match else "(diff)"
         reviewed_files += 1
 
         # Reserve room for the longest segment label and the actual path.
