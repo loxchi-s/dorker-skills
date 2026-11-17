@@ -310,8 +310,8 @@ def incomplete_review_report(review: str, reason: str) -> str:
 
 def _review_verdict(review: str) -> str | None:
     match = re.search(
-        r"(?im)^\\s*(?:#{1,6}\\s*)?Verdict\\s*:?\\s*\\n\\s*"
-        r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\\b",
+        r"(?im)^\s*(?:#{1,6}\s*)?Verdict\s*:?\s*\n\s*"
+        r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\b",
         review,
     )
     return match.group(1) if match else None
@@ -343,7 +343,7 @@ def review_context_chunks(
         chunk_prompt = prompt
         if chunk.truncated:
             chunk_prompt += (
-                "\\nThis file diff was truncated. Do not return NO_ACTIONABLE_FINDINGS; "
+                "\nThis file diff was truncated. Do not return NO_ACTIONABLE_FINDINGS; "
                 "return INCOMPLETE and explain the missing coverage."
             )
         try:
@@ -416,7 +416,7 @@ def build_aggregate_report(
         sections.extend(["", f"### File: {item.path}"])
         if item.status == "REVIEW_REQUIRED":
             findings_match = re.search(
-                r"(?ims)^\\s*#{1,6}\\s*Findings\\s*:?\\s*\\n(.*?)(?=^\\s*#{1,6}\\s*(?:Risks and Unknowns|Tests Needed)\\s*:?\\s*$)",
+                r"(?ims)^\s*#{1,6}\s*Findings\s*:?\s*\n(.*?)(?=^\s*#{1,6}\s*(?:Risks and Unknowns|Tests Needed)\s*:?\s*$)",
                 item.text,
             )
             sections.append(
@@ -452,7 +452,7 @@ def build_aggregate_report(
         )
     else:
         sections.append("Manually verify each reported finding and run the repository's relevant tests.")
-    return "\\n".join(sections)
+    return "\n".join(sections)
 
 
 def main() -> int:
