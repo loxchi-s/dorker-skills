@@ -479,9 +479,12 @@ def validate_review_output(
             return False
         if diff_context is not None:
             evidence = _unwrap_evidence(values["Evidence"])
+            evidence_line = evidence.lstrip("+-").strip()
             matching_lines = [
-                number for _, number, changed_line in _changed_diff_lines(diff_context)
-                if changed_line and changed_line in evidence
+                number
+                for _, number, changed_line in _changed_diff_lines(diff_context)
+                if len(changed_line) >= 12
+                and (evidence_line == changed_line or changed_line in evidence)
             ]
             if not matching_lines or not any(first_line <= number <= last_line for number in matching_lines):
                 return False
