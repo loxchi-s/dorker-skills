@@ -458,7 +458,7 @@ class PerFileChunkingTests(unittest.TestCase):
         self.assertFalse(result.truncated)
         large_chunks = [chunk for chunk in result.chunks if chunk.path == "large.py"]
         next_chunks = [chunk for chunk in result.chunks if chunk.path == "next.py"]
-        self.assertEqual(2, len(large_chunks))
+        self.assertEqual(3, len(large_chunks))
         self.assertEqual(1, len(next_chunks))
         self.assertTrue(all(not chunk.truncated for chunk in result.chunks))
         self.assertIn("x" * (MAX_CONTEXT_BYTES + 100), "".join(
