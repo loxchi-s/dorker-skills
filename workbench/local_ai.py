@@ -192,16 +192,16 @@ def validate_review_output(review: str) -> bool:
 
     required_fields = ("Severity", "File", "Evidence", "Impact", "Fix")
     field_pattern = re.compile(
-        r"^[ \\t]*(?:[-*][ \\t]*)?(Severity|File|Evidence|Impact|Fix)[ \\t]*:[ \\t]*(.*?)[ \\t]*$",
+        r"^[ \t]*(?:[-*][ \t]*)?(Severity|File|Evidence|Impact|Fix)[ \t]*:[ \t]*(.*?)[ \t]*$",
         re.IGNORECASE,
     )
-    file_line_pattern = re.compile(r"^[^\\s]+?(?::|,\\s*line\\s+)\\d+$", re.IGNORECASE)
+    file_line_pattern = re.compile(r"^[^\s]+?(?::|,\s*line\s+)\\d+$", re.IGNORECASE)
     blocks: list[list[str]] = []
     current: list[str] = []
     for line in findings.splitlines():
-        starts_heading = re.match(r"^[ \\t]*#{3,6}[ \\t]+", line) is not None
+        starts_heading = re.match(r"^[ \t]*#{3,6}[ \t]+", line) is not None
         starts_finding = re.match(
-            r"^[ \\t]*(?:[-*][ \\t]*)?Severity[ \\t]*:", line, re.IGNORECASE
+            r"^[ \t]*(?:[-*][ \t]*)?Severity[ \t]*:", line, re.IGNORECASE
         ) is not None
         if current and (starts_heading or starts_finding):
             blocks.append(current)
