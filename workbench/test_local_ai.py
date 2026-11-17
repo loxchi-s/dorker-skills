@@ -1,3 +1,4 @@
+import http.client
 import json
 import subprocess
 import tempfile
@@ -90,6 +91,26 @@ class ModelPromptTests(unittest.TestCase):
 
 
 class ReviewOutputValidationTests(unittest.TestCase):
+    @patch("local_ai.urllib.request.urlopen")
+    def test_model_request_converts_incomplete_http_response(self, urlopen):
+        response = Mock()
+        response.read.side_effect = http.client.IncompleteRead(b"{", 10)
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        urlopen.return_value = response
+        with self.assertRaisesRegex(RuntimeError, "Local model request failed"):
+            ask_model("test-model", "Review", "diff")
+
+    @patch("local_ai.urllib.request.urlopen")
+    def test_model_request_rejects_non_object_json(self, urlopen):
+        response = Mock()
+        response.read.return_value = b"[]"
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        urlopen.return_value = response
+        with self.assertRaisesRegex(RuntimeError, "non-object JSON"):
+            ask_model("test-model", "Review", "diff")
+
     def test_rejects_generic_repository_summary(self):
         generic = "This script contains redaction, context collection, and tests."
         self.assertFalse(validate_review_output(generic))
@@ -521,6 +542,34 @@ Run relevant unit tests.
         self.assertIn("INCOMPLETE", report)
         self.assertIn("large.py", report)
         self.assertIn("additional file(s) were not reviewed", report)
+
+    def test_aggregate_preserves_findings_without_markdown_hash_headings(self):
+        finding = """Verdict:
+REVIEW_REQUIRED
+
+Findings:
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence: exact changed line
+- Impact: concrete impact
+- Fix: concrete fix
+
+Risks and Unknowns:
+Runtime behavior is unknown.
+
+Tests Needed:
+Add a regression test.
+"""
+        item = ChunkReview(
+            path="workbench/local_ai.py",
+            status="REVIEW_REQUIRED",
+            text=finding,
+            reason=None,
+            model_response=None,
+        )
+        report = build_aggregate_report((item,), omitted_files=0)
+        self.assertIn("Severity: High", report)
+        self.assertIn("exact changed line", report)
 
     def test_aggregate_preserves_validated_findings(self):
         finding = """## Verdict
