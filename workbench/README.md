@@ -74,8 +74,9 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 ## Execution contract
 
 - **Execution model:** one GitHub Actions job owns one review run. The Workbench process is a
-  bounded, synchronous coordinator that collects the caller diff, invokes local Ollama requests
-  sequentially per file, validates each response, and writes one aggregate Markdown report.
+  bounded, synchronous coordinator that collects the caller diff, splits oversized file diffs
+  into UTF-8-safe segments, invokes local Ollama requests sequentially per segment, validates
+  each response, and writes one aggregate Markdown report.
 - **Concurrency and identity:** GitHub Actions concurrency is keyed by repository and ref, with
   superseded runs cancelled. The durable execution identity is the GitHub run ID and attempt;
   the report records workflow commit and PR head commit separately. Each run uploads a
