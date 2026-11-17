@@ -275,7 +275,11 @@ _REQUIRED_REVIEW_SECTIONS = ("Verdict", "Findings", "Risks and Unknowns", "Tests
 _VALID_VERDICTS = {"REVIEW_REQUIRED", "NO_ACTIONABLE_FINDINGS", "INCOMPLETE"}
 
 
-def validate_review_output(\n    review: str,\n    diff_context: str | None = None,\n    expected_path: str | None = None,\n) -> bool:
+def validate_review_output(
+    review: str,
+    diff_context: str | None = None,
+    expected_path: str | None = None,
+) -> bool:
     """Return True only when model output follows the minimum review contract."""
     heading_matches = {
         name: re.search(
