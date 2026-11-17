@@ -67,7 +67,8 @@ REVIEW_SYSTEM_PROMPT = (
     "Do not summarize files or list functions. Do not invent behavior, tests, line numbers, "
     "or evidence. Findings must point to a changed file and a changed line when available. "
     "For each finding include severity (Critical/High/Medium/Low), file and line, evidence, "
-    "impact, and a concrete fix. If no actionable defect is supported, say exactly that no "
+    "impact, and a concrete fix. Evidence must quote an exact changed line from the supplied "
+    "diff segment; never cite an unchanged line or infer unseen code. If no actionable defect is supported, say exactly that no "
     "actionable findings were identified and explain what was not verified. "
     "Always include sections: Verdict, Findings, Risks and Unknowns, Tests Needed. "
     "Verdict must be one of REVIEW_REQUIRED, NO_ACTIONABLE_FINDINGS, or INCOMPLETE. "
@@ -274,7 +275,7 @@ _REQUIRED_REVIEW_SECTIONS = ("Verdict", "Findings", "Risks and Unknowns", "Tests
 _VALID_VERDICTS = {"REVIEW_REQUIRED", "NO_ACTIONABLE_FINDINGS", "INCOMPLETE"}
 
 
-def validate_review_output(review: str) -> bool:
+def validate_review_output(\n    review: str,\n    diff_context: str | None = None,\n    expected_path: str | None = None,\n) -> bool:
     """Return True only when model output follows the minimum review contract."""
     heading_matches = {
         name: re.search(
@@ -344,8 +345,22 @@ def validate_review_output(review: str) -> bool:
             return False
         if file_line_pattern.fullmatch(values["File"]) is None:
             return False
+        if expected_path is not None:
+            cited_path = values["File"].rsplit(":", 1)[0]
+            if cited_path != expected_path:
+                return False
+        if diff_context is not None:
+            changed_lines = [
+                line[1:].strip()
+                for line in diff_context.splitlines()
+                if line.startswith(("+", "-"))
+                and not line.startswith(("+++", "---"))
+                and line[1:].strip()
+            ]
+            evidence = values["Evidence"].replace(chr(96), "").strip()
+            if not changed_lines or not any(changed_line in evidence for changed_line in changed_lines):
+                return False
     return validated_findings > 0
-
 
 def _review_verdict(review: str) -> str | None:
     match = re.search(
@@ -412,7 +427,9 @@ def review_context_chunks(
             )
             reason = " ".join(part for part in (reason, truncation_reason) if part)
         verdict = _review_verdict(model_result.text)
-        if reason or not validate_review_output(model_result.text) or verdict == "INCOMPLETE":
+        if reason or not validate_review_output(
+            model_result.text, diff_context=chunk.text, expected_path=chunk.path
+        ) or verdict == "INCOMPLETE":
             if not reason:
                 reason = (
                     "The model explicitly returned INCOMPLETE."
