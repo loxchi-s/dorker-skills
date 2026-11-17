@@ -703,18 +703,17 @@ Add a regression test.
         self.assertFalse(validate_review_output(review))
 
     def test_git_quoted_path_decodes_spaces_and_utf8(self):
-        token = '"b/my file\\\\303\\\\251.py"'
+        slash = chr(92)
+        token = '"b/my file' + slash + '303' + slash + '251.py"'
         self.assertEqual("my fileé.py", _decode_git_path(token))
 
     def test_collect_context_parses_quoted_git_path(self):
-        diff = (
-            'diff --git "a/my file\\\\303\\\\251.py" "b/my file\\\\303\\\\251.py"\\n'
-            "@@ -0,0 +1,1 @@\\n+dangerous_call_with_context();\\n"
-        )
+        slash = chr(92)
+        header = 'diff --git "a/my file' + slash + '303' + slash + '251.py" "b/my file' + slash + '303' + slash + '251.py"'
+        diff = header + "\n@@ -0,0 +1,1 @@\n+dangerous_call_with_context();\n"
         with patch("local_ai._git_output", return_value=diff):
             result = collect_context("main")
         self.assertEqual("my fileé.py", result.chunks[0].path)
-
 
     def test_second_segment_keeps_hunk_line_coordinates(self):
         diff = "diff --git a/sample.py b/sample.py\n@@ -10,2 +10,2 @@\n a\n+b\n c\n"
