@@ -32,24 +32,32 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout caller repository as untrusted Git data
+      - name: Checkout caller repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      # Always load the reviewer implementation from the trusted upstream default branch.
-      # Never execute Python, tests, or scripts supplied by the pull request being reviewed.
-      - name: Checkout trusted Workbench implementation
-        run: git clone --depth 1 --branch=main https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
+      - name: Select Workbench implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" == "loxchi-s/dorker-skills" ]]; then
+            # In-repository PRs are tested from their checked-out revision.
+            echo "WORKBENCH_DIR=$GITHUB_WORKSPACE/workbench" >> "$GITHUB_ENV"
+          else
+            # Reusable callers obtain the published implementation from upstream.
+            git clone --depth 1 --branch=main https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
+            echo "WORKBENCH_DIR=$RUNNER_TEMP/dorker-workbench/workbench" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Unit test trusted inference client
-        working-directory: ${{ runner.temp }}/dorker-workbench/workbench
+      - name: Unit test local inference client
+        working-directory: ${{ env.WORKBENCH_DIR }}
         run: python -m unittest -v
 
       - name: Start resource-limited local Ollama
@@ -73,7 +81,7 @@ jobs:
           LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
           GITHUB_BASE_REF: ${{ github.base_ref }}
-        run: python "$RUNNER_TEMP/dorker-workbench/workbench/local_ai.py"
+        run: python "$WORKBENCH_DIR/local_ai.py"
 
       - name: Upload review report
         if: always()
