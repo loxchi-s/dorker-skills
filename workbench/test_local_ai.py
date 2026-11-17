@@ -423,7 +423,7 @@ class ModelResponseStatusTests(unittest.TestCase):
         result = ModelResponse(
             text="review",
             done_reason="stop",
-            prompt_eval_count=int(NUM_CTX * 0.90),
+            prompt_eval_count=min(int(NUM_CTX * 0.90), NUM_CTX - NUM_PREDICT),
             eval_count=20,
         )
         self.assertIsNone(model_response_incomplete_reason(result))
