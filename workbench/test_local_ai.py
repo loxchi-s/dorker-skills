@@ -225,7 +225,7 @@ Runtime behavior is unknown.
 ## Tests Needed
 Add a short-line evidence regression test.
 """
-        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n@@ -41,0 +42,1 @@\\n+)\\n"
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\n@@ -41,0 +42,1 @@\n+)\n"
         self.assertFalse(validate_review_output(
             review, diff_context=diff, expected_path="workbench/local_ai.py"
         ))
@@ -247,7 +247,7 @@ Runtime behavior is unknown.
 ## Tests Needed
 Add a response-close test.
 """
-        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n@@ -41,0 +42,1 @@\\n+with urllib.request.urlopen(request) as response:\\n"
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\n@@ -41,0 +42,1 @@\n+with urllib.request.urlopen(request) as response:\n"
         self.assertTrue(validate_review_output(
             review, diff_context=diff, expected_path="workbench/local_ai.py"
         ))
