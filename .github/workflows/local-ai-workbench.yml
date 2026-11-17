@@ -48,7 +48,7 @@ jobs:
           IMPLEMENTATION_REF: ${{ inputs.implementation_ref }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" != "workflow_call" ]]; then
+          if [[ -z "$IMPLEMENTATION_REF" ]]; then
             # Direct workflow_dispatch and pull_request runs use the checked-out revision,
             # including runs initiated from forks.
             echo "WORKBENCH_DIR=$GITHUB_WORKSPACE/workbench" >> "$GITHUB_ENV"
