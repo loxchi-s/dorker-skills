@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from local_ai import (
     NUM_CTX,
     NUM_PREDICT,
     REVIEW_SYSTEM_PROMPT,
+    TRUNCATION_NOTICE,
     ChunkReview,
     ContextChunk,
     ModelResponse,
@@ -21,6 +23,7 @@ from local_ai import (
     build_aggregate_report,
     collect_context,
     model_response_incomplete_reason,
+    main,
     redact_secrets,
     review_context_chunks,
     validate_review_output,
@@ -948,6 +951,71 @@ Add a path-with-spaces regression test.
             for chunk in result.chunks
         ))
 
+
+    @patch("local_ai.ask_model")
+    @patch("local_ai._git_output")
+    def test_binary_only_diff_is_incomplete_without_model_request(self, git_output, ask_model_mock):
+        git_output.return_value = (
+            "diff --git a/module.wasm b/module.wasm\n"
+            "index 1111111..2222222 100644\n"
+            "Binary files a/module.wasm and b/module.wasm differ\n"
+        )
+        context = collect_context("main")
+        self.assertEqual(1, len(context.chunks))
+        self.assertFalse(context.chunks[0].reviewable)
+        result = review_context_chunks(context.chunks, "test-model", "Review")
+        self.assertEqual("INCOMPLETE", result[0].status)
+        self.assertIn("Binary diff", result[0].reason)
+        ask_model_mock.assert_not_called()
+
+    @patch("local_ai.urllib.request.urlopen")
+    @patch("local_ai._git_output")
+    def test_truncated_chunk_notice_is_reserved_before_real_request(self, git_output, urlopen):
+        git_output.return_value = (
+            "diff --git a/sample.py b/sample.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+" + ("x" * 200_000) + "\n"
+        )
+        response = Mock()
+        response.read.return_value = json.dumps({
+            "response": "## Verdict\nINCOMPLETE\n",
+            "done_reason": "stop",
+            "prompt_eval_count": 100,
+            "eval_count": 20,
+        }).encode()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        urlopen.return_value = response
+
+        prompt = "Review this patch."
+        context = collect_context("main", prompt)
+        truncated = next(chunk for chunk in context.chunks if chunk.truncated)
+        budget = calculate_token_budget(
+            system_prompt=REVIEW_SYSTEM_PROMPT,
+            user_prompt=prompt[:3000] + TRUNCATION_NOTICE,
+            context_window=NUM_CTX,
+            output_reserve=NUM_PREDICT,
+            safety_ratio=0.90,
+        )
+        self.assertLessEqual(
+            estimate_tokens_upper_bound(truncated.text), budget.diff_token_budget
+        )
+        result = ask_model("test-model", prompt + TRUNCATION_NOTICE, truncated.text)
+        self.assertEqual("stop", result.done_reason)
+        urlopen.assert_called_once()
+
+    def test_main_writes_incomplete_report_for_multibyte_prompt_budget_rejection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "report.md"
+            with patch.dict(os.environ, {
+                "LOCAL_AI_PROMPT": "界" * 3_000,
+                "LOCAL_AI_REPORT": str(report),
+            }, clear=False):
+                self.assertEqual(0, main())
+            content = report.read_text(encoding="utf-8")
+            self.assertIn("INCOMPLETE", content)
+            self.assertIn("Context budget rejected before inference", content)
+            self.assertIn("unavailable (prompt rejected)", content)
 
     def test_direct_test_execution_includes_all_regression_classes(self):
         source = Path(__file__).read_text(encoding="utf-8")
