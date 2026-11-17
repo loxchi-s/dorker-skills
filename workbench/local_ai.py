@@ -133,20 +133,36 @@ def _git_output(args: list[str], timeout: int = 30) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
-def _split_utf8_text(value: str, byte_limit: int) -> list[str]:
-    """Split text on line boundaries, preserving Unicode; split only oversized lines."""
+def _iter_lf_lines(value: str):
+    """Yield physical patch lines using LF only; U+2028 is ordinary source content."""
+    start = 0
+    while start < len(value):
+        end = value.find("\n", start)
+        if end < 0:
+            yield value[start:]
+            return
+        yield value[start : end + 1]
+        start = end + 1
+
+
+def _split_utf8_text(
+    value: str,
+    byte_limit: int,
+    max_parts: int | None = None,
+) -> list[str]:
+    """Split UTF-8 text on LF boundaries; optionally stop after a bounded prefix."""
     parts: list[str] = []
     current: list[str] = []
     current_bytes = 0
 
     def flush() -> None:
         nonlocal current, current_bytes
-        if current:
+        if current and (max_parts is None or len(parts) < max_parts):
             parts.append("".join(current))
             current = []
             current_bytes = 0
 
-    def split_oversized_line(line: str) -> list[str]:
+    def split_oversized_line(line: str, remaining_parts: int | None) -> list[str]:
         fragments: list[str] = []
         fragment: list[str] = []
         fragment_bytes = 0
@@ -156,6 +172,8 @@ def _split_utf8_text(value: str, byte_limit: int) -> list[str]:
                 raise ValueError("A single UTF-8 code point exceeds the configured chunk limit")
             if fragment and fragment_bytes + size > byte_limit:
                 fragments.append("".join(fragment))
+                if remaining_parts is not None and len(fragments) >= remaining_parts:
+                    return fragments
                 fragment = []
                 fragment_bytes = 0
             fragment.append(character)
@@ -164,11 +182,14 @@ def _split_utf8_text(value: str, byte_limit: int) -> list[str]:
             fragments.append("".join(fragment))
         return fragments
 
-    for line in value.splitlines(keepends=True):
+    for line in _iter_lf_lines(value):
+        if max_parts is not None and len(parts) >= max_parts:
+            break
         line_bytes = len(line.encode("utf-8"))
         if line_bytes > byte_limit:
             flush()
-            parts.extend(split_oversized_line(line))
+            remaining = None if max_parts is None else max_parts - len(parts)
+            parts.extend(split_oversized_line(line, remaining))
             continue
         if current and current_bytes + line_bytes > byte_limit:
             flush()
@@ -188,13 +209,14 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
     continuation = False
     in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-    for line in diff_text.splitlines(keepends=True):
+    for line in _iter_lf_lines(diff_text):
         if consumed >= offset:
             break
         if consumed + len(line) > offset:
             continuation = True
             break
-        body = line.rstrip("\r\n")
+        body = line[:-1] if line.endswith("\n") else line
+        body = body[:-1] if body.endswith("\r") else body
         if body.startswith("diff --git "):
             in_hunk = False
             old_line = new_line = None
@@ -253,8 +275,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
     file_plans: list[dict[str, object]] = []
     omitted_files = max(0, len(file_diffs) - MAX_REVIEW_FILES)
     for file_diff in file_diffs[:MAX_REVIEW_FILES]:
-        lines = file_diff.splitlines()
-        header = lines[0] if lines else ""
+        header = next(_iter_lf_lines(file_diff), "").rstrip("\r\n")
         path_match = re.match(
             r'^diff --git ("(?:\\.|[^"\\])*"|\S+) ("(?:\\.|[^"\\])*"|\S+)$',
             header,
@@ -270,7 +291,13 @@ def collect_context(base_ref: str = "") -> ContextResult:
             omitted_files += 1
             continue
 
-        raw_segments = _split_utf8_text(file_diff, segment_budget)
+        # Only prepare enough segments to prove this file exceeds the global
+        # review cap. This bounds preprocessing even for multi-megabyte diffs.
+        raw_segments = _split_utf8_text(
+            file_diff,
+            segment_budget,
+            max_parts=MAX_REVIEW_CHUNKS + 1,
+        )
         total_segments = len(raw_segments)
         prepared: list[ContextChunk] = []
         consumed_chars = 0
@@ -283,7 +310,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
             )
             if continuation:
                 position += "# continuation of a split diff line\n"
-            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
+            label = f"File: {file_path} | diff segment {segment_index}/at-least-{total_segments}\n"
             prepared.append(
                 ContextChunk(path=file_path, text=label + position + segment, truncated=False)
             )
@@ -434,7 +461,10 @@ def _changed_diff_lines(diff_context: str) -> list[tuple[str, int, str]]:
     old_line = new_line = None
     in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-    for line in diff_context.splitlines():
+    for line in _iter_lf_lines(diff_context):
+        line = line[:-1] if line.endswith("\n") else line
+        if line.endswith("\r"):
+            line = line[:-1]
         if line.startswith("diff --git "):
             in_hunk = False
             old_line = new_line = None
