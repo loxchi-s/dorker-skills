@@ -17,6 +17,10 @@ on:
         required: false
         type: string
         default: "Review this change for correctness, security, reliability, and missing tests."
+      implementation_ref:
+        description: Full 40-character commit SHA for the Workbench implementation (must match the reusable workflow ref)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -40,15 +44,30 @@ jobs:
 
       - name: Select Workbench implementation
         shell: bash
+        env:
+          IMPLEMENTATION_REF: ${{ inputs.implementation_ref }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REPOSITORY" == "loxchi-s/dorker-skills" ]]; then
             # In-repository PRs are tested from their checked-out revision.
             echo "WORKBENCH_DIR=$GITHUB_WORKSPACE/workbench" >> "$GITHUB_ENV"
           else
-            # Reusable callers obtain the published implementation from upstream.
-            git clone --depth 1 --branch=main https://github.com/loxchi-s/dorker-skills.git "$RUNNER_TEMP/dorker-workbench"
-            echo "WORKBENCH_DIR=$RUNNER_TEMP/dorker-workbench/workbench" >> "$GITHUB_ENV"
+            # External callers must provide the same immutable SHA used in the reusable-workflow reference.
+            if [[ ! "$IMPLEMENTATION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::implementation_ref must be a full lowercase 40-character commit SHA."
+              exit 1
+            fi
+            workbench_dir="$RUNNER_TEMP/dorker-workbench"
+            git init "$workbench_dir"
+            git -C "$workbench_dir" remote add origin https://github.com/loxchi-s/dorker-skills.git
+            git -C "$workbench_dir" fetch --depth=1 origin "$IMPLEMENTATION_REF"
+            fetched_sha="$(git -C "$workbench_dir" rev-parse FETCH_HEAD)"
+            if [[ "$fetched_sha" != "$IMPLEMENTATION_REF" ]]; then
+              echo "::error::Fetched Workbench revision does not match implementation_ref."
+              exit 1
+            fi
+            git -C "$workbench_dir" checkout --detach FETCH_HEAD
+            echo "WORKBENCH_DIR=$workbench_dir/workbench" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Python
