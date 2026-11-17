@@ -109,22 +109,50 @@ def _git_output(args: list[str], timeout: int = 30) -> str:
 
 
 def _split_utf8_text(value: str, byte_limit: int) -> list[str]:
-    """Split text on Unicode code-point boundaries without dropping content."""
+    """Split text on line boundaries, preserving Unicode; split only oversized lines."""
     parts: list[str] = []
     current: list[str] = []
     current_bytes = 0
-    for character in value:
-        size = len(character.encode("utf-8"))
-        if current and current_bytes + size > byte_limit:
+
+    def flush() -> None:
+        nonlocal current, current_bytes
+        if current:
             parts.append("".join(current))
             current = []
             current_bytes = 0
-        if size > byte_limit:
-            raise ValueError("A single UTF-8 code point exceeds the configured chunk limit")
-        current.append(character)
-        current_bytes += size
-    if current or not parts:
-        parts.append("".join(current))
+
+    def split_oversized_line(line: str) -> list[str]:
+        fragments: list[str] = []
+        fragment: list[str] = []
+        fragment_bytes = 0
+        for character in line:
+            size = len(character.encode("utf-8"))
+            if size > byte_limit:
+                raise ValueError("A single UTF-8 code point exceeds the configured chunk limit")
+            if fragment and fragment_bytes + size > byte_limit:
+                fragments.append("".join(fragment))
+                fragment = []
+                fragment_bytes = 0
+            fragment.append(character)
+            fragment_bytes += size
+        if fragment:
+            fragments.append("".join(fragment))
+        return fragments
+
+    for line in value.splitlines(keepends=True):
+        line_bytes = len(line.encode("utf-8"))
+        if line_bytes > byte_limit:
+            flush()
+            parts.extend(split_oversized_line(line))
+            continue
+        if current and current_bytes + line_bytes > byte_limit:
+            flush()
+        current.append(line)
+        current_bytes += line_bytes
+
+    flush()
+    if not parts:
+        parts.append(value)
     return parts
 
 
