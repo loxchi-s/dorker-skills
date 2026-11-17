@@ -6,14 +6,20 @@ from unittest.mock import Mock
 
 from local_ai import (
     MAX_CONTEXT_BYTES,
+    MAX_REVIEW_FILES,
+    MAX_TOTAL_CONTEXT_BYTES,
     NUM_CTX,
     NUM_PREDICT,
     REVIEW_SYSTEM_PROMPT,
+    ChunkReview,
+    ContextChunk,
     ModelResponse,
     ask_model,
+    build_aggregate_report,
     collect_context,
     model_response_incomplete_reason,
     redact_secrets,
+    review_context_chunks,
     validate_review_output,
 )
 
@@ -235,6 +241,116 @@ class ContextBoundsTests(unittest.TestCase):
         context = collect_context("main")
         self.assertLessEqual(len(context.text.encode("utf-8")), MAX_CONTEXT_BYTES)
         self.assertTrue(context.truncated)
+
+
+class PerFileChunkingTests(unittest.TestCase):
+    @patch("local_ai._git_output")
+    def test_collect_context_splits_changed_files(self, git_output):
+        git_output.return_value = (
+            "diff --git a/one.py b/one.py\n+one\n"
+            "diff --git a/two.py b/two.py\n+two\n"
+        )
+        result = collect_context("main")
+        self.assertEqual(2, len(result.chunks))
+        self.assertEqual("one.py", result.chunks[0].path)
+        self.assertEqual("two.py", result.chunks[1].path)
+        self.assertFalse(result.truncated)
+
+    @patch("local_ai._git_output")
+    def test_collect_context_marks_large_file_and_remaining_files_incomplete(self, git_output):
+        first = "diff --git a/large.py b/large.py\n" + ("x" * (MAX_CONTEXT_BYTES + 100))
+        second = "diff --git a/next.py b/next.py\n+next"
+        git_output.return_value = first + "\n" + second
+        result = collect_context("main")
+        self.assertTrue(result.truncated)
+        self.assertTrue(result.chunks[0].truncated)
+        self.assertEqual(1, result.omitted_files)
+        self.assertLessEqual(
+            len(result.text.encode("utf-8")),
+            MAX_TOTAL_CONTEXT_BYTES,
+        )
+
+    @patch("local_ai.ask_model")
+    def test_review_runs_once_per_file_and_passes_timeout(self, ask_model_mock):
+        valid = """## Verdict
+NO_ACTIONABLE_FINDINGS
+
+## Findings
+No actionable findings were identified in this file.
+
+## Risks and Unknowns
+Runtime behavior was not exercised.
+
+## Tests Needed
+Run relevant unit tests.
+"""
+        ask_model_mock.return_value = ModelResponse(
+            text=valid,
+            done_reason="stop",
+            prompt_eval_count=100,
+            eval_count=50,
+        )
+        chunks = (
+            ContextChunk("one.py", "diff one", False),
+            ContextChunk("two.py", "diff two", False),
+        )
+        results = review_context_chunks(chunks, "test-model", "Review")
+        self.assertEqual(2, ask_model_mock.call_count)
+        self.assertEqual(
+            ["one.py", "two.py"],
+            [item.path for item in results],
+        )
+        self.assertTrue(all(item.status == "NO_ACTIONABLE_FINDINGS" for item in results))
+        self.assertGreater(ask_model_mock.call_args.kwargs["timeout_seconds"], 0)
+
+    def test_aggregate_is_incomplete_when_any_file_is_incomplete(self):
+        complete = ChunkReview(
+            path="safe.py",
+            status="NO_ACTIONABLE_FINDINGS",
+            text="",
+            reason=None,
+            model_response=None,
+        )
+        incomplete = ChunkReview(
+            path="large.py",
+            status="INCOMPLETE",
+            text="partial",
+            reason="context truncated",
+            model_response=None,
+        )
+        report = build_aggregate_report((complete, incomplete), omitted_files=1)
+        self.assertIn("INCOMPLETE", report)
+        self.assertIn("large.py", report)
+        self.assertIn("additional file(s) were not reviewed", report)
+
+    def test_aggregate_preserves_validated_findings(self):
+        finding = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence: A concrete defect exists on this changed line.
+- Impact: The review result may be incorrect.
+- Fix: Correct the affected branch.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a regression test.
+"""
+        item = ChunkReview(
+            path="workbench/local_ai.py",
+            status="REVIEW_REQUIRED",
+            text=finding,
+            reason=None,
+            model_response=None,
+        )
+        report = build_aggregate_report((item,), omitted_files=0)
+        self.assertIn("REVIEW_REQUIRED", report)
+        self.assertIn("Severity: High", report)
+        self.assertIn("concrete defect", report)
 
 
 if __name__ == "__main__":
