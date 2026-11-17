@@ -128,7 +128,7 @@ def validate_review_output(review: str) -> bool:
         return False
 
     verdict_match = re.search(
-        r"(?im)^\s*(?:#{{1,6}}\s*)?Verdict\s*:?\s*\n\s*"
+        r"(?im)^\s*(?:#{1,6}\s*)?Verdict\s*:?\s*\n\s*"
         r"(REVIEW_REQUIRED|NO_ACTIONABLE_FINDINGS|INCOMPLETE)\b",
         review,
     )
@@ -152,7 +152,7 @@ def validate_review_output(review: str) -> bool:
     ):
         return False
     return re.search(
-        r"(?im)^\s*(?:[-*]\s*)?File\s*:\s*[^\s]+\s*(?::|,\s*line\s+)\s*\d+",
+        r"(?im)^\s*(?:[-*]\s*)?File\s*:\s*[^\s]+?(?::|,\s*line\s+)\s*\d+",
         findings,
     ) is not None
 
