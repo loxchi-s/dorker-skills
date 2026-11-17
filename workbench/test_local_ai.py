@@ -414,10 +414,37 @@ class ModelResponseStatusTests(unittest.TestCase):
         result = ModelResponse(
             text="review",
             done_reason="stop",
-            prompt_eval_count=NUM_CTX - NUM_PREDICT,
+            prompt_eval_count=NUM_CTX - NUM_PREDICT + 1,
             eval_count=20,
         )
         self.assertIn("context tokens", model_response_incomplete_reason(result))
+
+    def test_prompt_at_safe_boundary_is_not_rejected(self):
+        result = ModelResponse(
+            text="review",
+            done_reason="stop",
+            prompt_eval_count=int(NUM_CTX * 0.90),
+            eval_count=20,
+        )
+        self.assertIsNone(model_response_incomplete_reason(result))
+
+    @patch("local_ai.urllib.request.urlopen")
+    def test_oversized_request_is_rejected_before_network_call(self, urlopen):
+        with self.assertRaisesRegex(RuntimeError, "rejected before inference"):
+            ask_model("test-model", "review", "x" * 20_000)
+        urlopen.assert_not_called()
+
+    @patch("local_ai._git_output")
+    def test_longer_user_prompt_reduces_available_diff_context(self, git_output):
+        git_output.return_value = (
+            "diff --git a/sample.py b/sample.py\\n"
+            + ("+x" * 20_000)
+        )
+        short = collect_context("main", "")
+        long = collect_context("main", "x" * 2_000)
+        short_max = max(len(chunk.text.encode("utf-8")) for chunk in short.chunks)
+        long_max = max(len(chunk.text.encode("utf-8")) for chunk in long.chunks)
+        self.assertLess(long_max, short_max)
 
     def test_missing_completion_metadata_marks_review_incomplete(self):
         result = ModelResponse(
