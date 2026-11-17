@@ -48,11 +48,12 @@ jobs:
           IMPLEMENTATION_REF: ${{ inputs.implementation_ref }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REPOSITORY" == "loxchi-s/dorker-skills" ]]; then
-            # In-repository PRs are tested from their checked-out revision.
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_call" ]]; then
+            # Direct workflow_dispatch and pull_request runs use the checked-out revision,
+            # including runs initiated from forks.
             echo "WORKBENCH_DIR=$GITHUB_WORKSPACE/workbench" >> "$GITHUB_ENV"
           else
-            # External callers must provide the same immutable SHA used in the reusable-workflow reference.
+            # External reusable callers must provide the same immutable SHA used in the workflow reference.
             if [[ ! "$IMPLEMENTATION_REF" =~ ^[0-9a-f]{40}$ ]]; then
               echo "::error::implementation_ref must be a full lowercase 40-character commit SHA."
               exit 1
@@ -108,7 +109,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: local-ai-review-${{ github.run_id }}
+          name: local-ai-review-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/local-ai-report.md
           if-no-files-found: ignore
           retention-days: 7
