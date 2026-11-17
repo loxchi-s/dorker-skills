@@ -553,7 +553,7 @@ def build_aggregate_report(
         elif item.status == "NO_ACTIONABLE_FINDINGS":
             sections.append("No actionable findings were identified for this file.")
         else:
-            sections.append(f"Review incomplete: {item.reason or \"No complete response was produced.\"}")
+            sections.append("Review incomplete: " + (item.reason or "No complete response was produced."))
             if item.text:
                 sections.extend(["", "Raw model output:", item.text])
 
