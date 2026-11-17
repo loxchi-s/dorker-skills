@@ -113,6 +113,50 @@ Add a mocked response-close test.
 """
         self.assertTrue(validate_review_output(review))
 
+    def test_rejects_finding_without_exact_changed_line_evidence(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence: The response stream is leaked on every request.
+- Impact: Repeated requests may exhaust resources.
+- Fix: Close the response stream.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a response-close test.
+"""
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n+with urllib.request.urlopen(request) as response:"
+        self.assertFalse(validate_review_output(
+            review, diff_context=diff, expected_path="workbench/local_ai.py"
+        ))
+
+    def test_rejects_finding_for_a_different_file(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+- Severity: High
+- File: other.py:42
+- Evidence: +with urllib.request.urlopen(request) as response:
+- Impact: Repeated requests may exhaust resources.
+- Fix: Close the response stream.
+
+## Risks and Unknowns
+Runtime behavior is unknown.
+
+## Tests Needed
+Add a response-close test.
+"""
+        diff = "diff --git a/workbench/local_ai.py b/workbench/local_ai.py\\n+with urllib.request.urlopen(request) as response:"
+        self.assertFalse(validate_review_output(
+            review, diff_context=diff, expected_path="workbench/local_ai.py"
+        ))
+
     def test_rejects_empty_or_invalid_finding_fields(self):
         review = """## Verdict
 REVIEW_REQUIRED
