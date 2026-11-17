@@ -167,14 +167,14 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
     old_line = new_line = None
     consumed = 0
     continuation = False
-    hunk = re.compile(r"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@")
+    hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
     for line in diff_text.splitlines(keepends=True):
         if consumed >= offset:
             break
         if consumed + len(line) > offset:
             continuation = True
             break
-        body = line.rstrip("\\r\\n")
+        body = line.rstrip("\r\n")
         match = hunk.match(body)
         if match:
             old_line, new_line = int(match.group(1)), int(match.group(2))
@@ -226,7 +226,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
 
         # Reserve room for the longest segment label and the actual path.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/999\\nPosition old=999999 new=999999 continuation=1\\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
         )
         segment_budget = MAX_CONTEXT_BYTES - label_budget
         if segment_budget <= 0:
@@ -242,9 +242,9 @@ def collect_context(base_ref: str = "") -> ContextResult:
             old_position, new_position, continuation = _diff_position_at_offset(file_diff, consumed_chars)
             position = (
                 f"Position old={old_position or 'n/a'} new={new_position or 'n/a'} "
-                f"continuation={int(continuation)}\\n"
+                f"continuation={int(continuation)}\n"
             )
-            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
+            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
             chunk_text = label + position + segment
             consumed_chars += len(segment)
             
@@ -368,7 +368,7 @@ def _changed_diff_lines(diff_context: str) -> list[tuple[str, int, str]]:
     """Map added lines to new-file coordinates and deleted lines to old-file coordinates."""
     changed: list[tuple[str, int, str]] = []
     old_line = new_line = None
-    hunk = re.compile(r"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@")
+    hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
     for line in diff_context.splitlines():
         match = hunk.match(line)
         if match:
@@ -465,7 +465,7 @@ def validate_review_output(
             file_reference = file_reference[1:-1]
         if file_line_pattern.fullmatch(file_reference) is None:
             return False
-        match = re.fullmatch(r"(.+?)(?::|,\\s*line\\s+)(\\d+)(?:-(\\d+))?", file_reference, re.IGNORECASE)
+        match = re.fullmatch(r"(.+?)(?::|,\s*line\s+)(\d+)(?:-(\d+))?", file_reference, re.IGNORECASE)
         if match is None:
             return False
         cited_path = match.group(1)
