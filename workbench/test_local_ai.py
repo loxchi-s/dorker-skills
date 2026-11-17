@@ -610,7 +610,7 @@ class CodeRabbitRegressionTests(unittest.TestCase):
     def test_second_segment_keeps_hunk_line_coordinates(self):
         diff = "diff --git a/sample.py b/sample.py\n@@ -10,2 +10,2 @@\n a\n+b\n c\n"
         second_offset = diff.index(" c\n")
-        self.assertEqual((11, 11, False), _diff_position_at_offset(diff, second_offset))
+        self.assertEqual((11, 12, False), _diff_position_at_offset(diff, second_offset))
 
     def test_validator_rejects_line_number_outside_changed_hunk(self):
         diff = "File: sample.py\n@@ -10,1 +10,1 @@\n-old_value\n+new_value\n"
