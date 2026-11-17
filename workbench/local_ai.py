@@ -232,23 +232,29 @@ def _split_utf8_text(
     return parts
 
 
-def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, int | None, bool]:
-    """Return old/new hunk cursors at a segment boundary and flag mid-line splits."""
+def _diff_position_and_marker_at_offset(
+    diff_text: str,
+    offset: int,
+) -> tuple[int | None, int | None, bool, str | None]:
+    """Return hunk cursors and the original marker when a segment splits a patch line."""
     old_line = new_line = None
     consumed = 0
     continuation = False
+    continuation_marker = None
     in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
     for line_start, line_end in _iter_lf_line_spans(diff_text):
         line_length = line_end - line_start
         if consumed >= offset:
             break
-        if consumed + line_length > offset:
-            continuation = True
-            break
         body = diff_text[line_start:line_end]
         body = body[:-1] if body.endswith("\n") else body
         body = body[:-1] if body.endswith("\r") else body
+        if consumed + line_length > offset:
+            continuation = True
+            if in_hunk and body and body[0] in {"+", "-", " "}:
+                continuation_marker = body[0]
+            break
         if body.startswith("diff --git "):
             in_hunk = False
             old_line = new_line = None
@@ -267,6 +273,14 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
                     old_line += 1
                     new_line += 1
         consumed += line_length
+    return old_line, new_line, continuation, continuation_marker
+
+
+def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, int | None, bool]:
+    """Backward-compatible hunk cursor lookup for a segment boundary."""
+    old_line, new_line, continuation, _ = _diff_position_and_marker_at_offset(
+        diff_text, offset
+    )
     return old_line, new_line, continuation
 
 def _decode_git_path(token: str) -> str:
@@ -298,7 +312,7 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
         )
     else:
         raw = _git_output(
-            ["show", "--diff-merges=first-parent", "--format=fuller", "--stat", "--patch", "--no-ext-diff", "HEAD"]
+            ["show", "--diff-merges=first-parent", "--format=fuller", "--stat", "--patch", "--no-ext-diff", "--no-color", "HEAD"]
         )
     if not raw.strip():
         raw = "No textual diff found. Review request and repository metadata only."
@@ -342,7 +356,7 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
         ) + len(
             (
                 f"@@ -{len(file_diff) + 1} +{len(file_diff) + 1} @@\n"
-                "# continuation of a split diff line\n"
+                "# continuation of a split diff line; marker=-\n"
             ).encode("utf-8")
         )
         segment_budget = request_context_bytes - label_budget
@@ -361,14 +375,19 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
         prepared: list[ContextChunk] = []
         consumed_chars = 0
         for segment_index, segment in enumerate(raw_segments, start=1):
-            old_position, new_position, continuation = _diff_position_at_offset(file_diff, consumed_chars)
+            old_position, new_position, continuation, continuation_marker = (\n                _diff_position_and_marker_at_offset(file_diff, consumed_chars)\n            )
             position = (
                 f"@@ -{old_position} +{new_position} @@\n"
                 if old_position is not None and new_position is not None
                 else ""
             )
             if continuation:
-                position += "# continuation of a split diff line\n"
+                marker_note = (
+                    f"; marker={continuation_marker}"
+                    if continuation_marker is not None
+                    else ""
+                )
+                position += f"# continuation of a split diff line{marker_note}\n"
             label = f"File: {file_path} | diff segment {segment_index}/at-least-{total_segments}\n"
             prepared.append(
                 ContextChunk(path=file_path, text=label + position + segment, truncated=False)
@@ -540,6 +559,8 @@ def _changed_diff_lines(diff_context: str) -> list[tuple[str, int, str]]:
     old_line = new_line = None
     in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+    continuation_marker = None
+    continuation_prefix = "# continuation of a split diff line; marker="
     for line in _iter_lf_lines(diff_context):
         line = line[:-1] if line.endswith("\n") else line
         if line.endswith("\r"):
@@ -547,15 +568,27 @@ def _changed_diff_lines(diff_context: str) -> list[tuple[str, int, str]]:
         if line.startswith("diff --git "):
             in_hunk = False
             old_line = new_line = None
+            continuation_marker = None
             continue
         match = hunk.match(line)
         if match:
             old_line, new_line = int(match.group(1)), int(match.group(2))
             in_hunk = True
+            continuation_marker = None
+            continue
+        if line.startswith(continuation_prefix):
+            candidate_marker = line[len(continuation_prefix):]
+            continuation_marker = (
+                candidate_marker if candidate_marker in {"+", "-", " "} else None
+            )
             continue
         if not in_hunk or old_line is None or new_line is None or not line:
             continue
-        marker, content = line[0], line[1:].strip()
+        if continuation_marker is not None:
+            marker, content = continuation_marker, line.strip()
+            continuation_marker = None
+        else:
+            marker, content = line[0], line[1:].strip()
         if marker == "+":
             changed.append(("new", new_line, content))
             new_line += 1

@@ -766,6 +766,63 @@ Add a regression test.
             result = collect_context("main")
         self.assertEqual("my fileé.py", result.chunks[0].path)
 
+    def test_fallback_git_show_disables_color_output(self):
+        diff = (
+            "diff --git a/sample.py b/sample.py\\n"
+            "@@ -0,0 +1,1 @@\\n"
+            "+dangerous_call_with_context();\\n"
+        )
+        with patch("local_ai._git_output", return_value=diff) as git_output:
+            collect_context("", "Review this patch.")
+        command = git_output.call_args.args[0]
+        self.assertEqual("show", command[0])
+        self.assertIn("--no-color", command)
+
+    def test_split_diff_continuations_preserve_add_delete_and_context_markers(self):
+        cases = (
+            (
+                "+",
+                "fragmented_added_source();",
+                [(("new", 20, "fragmented_added_source();")),
+                 (("new", 21, "next_added_source();"))],
+            ),
+            (
+                "-",
+                "fragmented_deleted_source();",
+                [(("old", 10, "fragmented_deleted_source();")),
+                 (("new", 20, "next_added_source();"))],
+            ),
+            (
+                " ",
+                "unchanged_context_source();",
+                [(("new", 21, "next_added_source();"))],
+            ),
+        )
+        for marker, fragment, expected in cases:
+            with self.subTest(marker=marker):
+                diff = (
+                    "File: sample.py\\n"
+                    "@@ -10,2 +20,2 @@\\n"
+                    f"# continuation of a split diff line; marker={marker}\\n"
+                    f"{fragment}\\n"
+                    "+next_added_source();\\n"
+                )
+                self.assertEqual(expected, _changed_diff_lines(diff))
+
+    def test_diff_position_reports_original_marker_for_split_line(self):
+        for marker in ("+", "-", " "):
+            with self.subTest(marker=marker):
+                diff = (
+                    "diff --git a/sample.py b/sample.py\\n"
+                    "@@ -10,1 +20,1 @@\\n"
+                    f"{marker}source_line_that_is_long_enough();\\n"
+                )
+                offset = diff.index("source_line") + 5
+                self.assertEqual(
+                    (10, 20, True, marker),
+                    _diff_position_and_marker_at_offset(diff, offset),
+                )
+
     def test_second_segment_keeps_hunk_line_coordinates(self):
         diff = "diff --git a/sample.py b/sample.py\n@@ -10,2 +10,2 @@\n a\n+b\n c\n"
         second_offset = diff.index(" c\n")
