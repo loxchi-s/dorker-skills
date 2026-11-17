@@ -931,7 +931,7 @@ Add a path-with-spaces regression test.
         git_output.return_value = (
             "diff --git a/sample.py b/sample.py\n"
             "@@ -0,0 +1,1 @@\n"
-            "+" + ("x" * 50_000) + "\n"
+            "+" + ("x" * 200_000) + "\n"
         )
         prompt = "Review this patch."
         result = collect_context("main", prompt)
