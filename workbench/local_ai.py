@@ -240,10 +240,9 @@ def collect_context(base_ref: str = "") -> ContextResult:
         consumed_chars = 0
         for segment_index, segment in enumerate(raw_segments, start=1):
             old_position, new_position, continuation = _diff_position_at_offset(file_diff, consumed_chars)
-            position = (
-                f"Position old={old_position or 'n/a'} new={new_position or 'n/a'} "
-                f"continuation={int(continuation)}\n"
-            )
+            position = f"@@ -{old_position} +{new_position} @@\\n" if old_position is not None and new_position is not None else ""
+            if continuation:
+                position += "# continuation of a split diff line\\n"
             label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
             chunk_text = label + position + segment
             consumed_chars += len(segment)
