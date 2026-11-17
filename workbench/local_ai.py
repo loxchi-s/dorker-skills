@@ -328,6 +328,30 @@ def _unwrap_evidence(value: str) -> str:
     return evidence
 
 
+def _changed_diff_lines(diff_context: str) -> list[tuple[str, int, str]]:
+    """Map added lines to new-file coordinates and deleted lines to old-file coordinates."""
+    changed: list[tuple[str, int, str]] = []
+    old_line = new_line = None
+    hunk = re.compile(r"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@")
+    for line in diff_context.splitlines():
+        match = hunk.match(line)
+        if match:
+            old_line, new_line = int(match.group(1)), int(match.group(2))
+            continue
+        if old_line is None or new_line is None or not line:
+            continue
+        marker, content = line[0], line[1:].strip()
+        if marker == "+" and not line.startswith("+++"):
+            changed.append(("new", new_line, content))
+            new_line += 1
+        elif marker == "-" and not line.startswith("---"):
+            changed.append(("old", old_line, content))
+            old_line += 1
+        elif marker == " ":
+            old_line += 1
+            new_line += 1
+    return [(side, number, text) for side, number, text in changed if text]
+
 def validate_review_output(
     review: str,
     diff_context: str | None = None,
