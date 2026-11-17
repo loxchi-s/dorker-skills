@@ -566,6 +566,34 @@ class PerFileChunkingTests(unittest.TestCase):
         self.assertTrue(any(chunk.truncated for chunk in result.chunks))
         self.assertLessEqual(len(result.chunks), MAX_REVIEW_CHUNKS)
 
+    @patch("local_ai._git_output")
+    def test_large_first_file_does_not_exclude_later_changed_files(self, git_output):
+        huge = (
+            "diff --git a/huge.py b/huge.py\\n"
+            + ("z" * (MAX_CONTEXT_BYTES * (MAX_REVIEW_CHUNKS + 1)))
+        )
+        later_one = "diff --git a/later_one.py b/later_one.py\\n+later_one"
+        later_two = "diff --git a/later_two.py b/later_two.py\\n+later_two"
+        git_output.return_value = huge + "\\n" + later_one + "\\n" + later_two
+
+        result = collect_context("main")
+
+        self.assertTrue(result.truncated)
+        self.assertLessEqual(len(result.chunks), MAX_REVIEW_CHUNKS)
+        self.assertIn("huge.py", {chunk.path for chunk in result.chunks})
+        self.assertIn("later_one.py", {chunk.path for chunk in result.chunks})
+        self.assertIn("later_two.py", {chunk.path for chunk in result.chunks})
+        self.assertTrue(
+            any(chunk.truncated for chunk in result.chunks if chunk.path == "huge.py")
+        )
+        self.assertFalse(
+            any(chunk.truncated for chunk in result.chunks if chunk.path == "later_one.py")
+        )
+        self.assertFalse(
+            any(chunk.truncated for chunk in result.chunks if chunk.path == "later_two.py")
+        )
+        self.assertEqual(1, result.omitted_files)
+
     @patch("local_ai.ask_model")
     def test_review_runs_once_per_file_and_passes_timeout(self, ask_model_mock):
         valid = """## Verdict
