@@ -19,6 +19,7 @@ MAX_CONTEXT_BYTES = 6_000
 MAX_TOTAL_CONTEXT_BYTES = 24_000
 MAX_REVIEW_FILES = 8
 MAX_RAW_OUTPUT_CHARS = 12_000
+MAX_REVIEW_SECONDS = 12 * 60
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 NUM_CTX = 4096
@@ -160,7 +161,12 @@ def collect_context(base_ref: str = "") -> ContextResult:
     )
 
 
-def ask_model(model: str, prompt: str, context: str) -> ModelResponse:
+def ask_model(
+    model: str,
+    prompt: str,
+    context: str,
+    timeout_seconds: float = 240.0,
+) -> ModelResponse:
     system = REVIEW_SYSTEM_PROMPT
     payload = {
         "model": model,
@@ -177,7 +183,7 @@ def ask_model(model: str, prompt: str, context: str) -> ModelResponse:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=240) as response:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = json.loads(response.read(2_000_000))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Local model request failed: {exc}") from exc
