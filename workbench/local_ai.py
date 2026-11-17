@@ -19,15 +19,15 @@ from pathlib import Path
 from token_budget import calculate_token_budget, estimate_tokens_upper_bound
 
 MAX_CONTEXT_BYTES = 6_000
-MAX_TOTAL_CONTEXT_BYTES = 48_000
-MAX_REVIEW_FILES = 8
-MAX_REVIEW_CHUNKS = 8
+MAX_TOTAL_CONTEXT_BYTES = 96_000
+MAX_REVIEW_FILES = 16
+MAX_REVIEW_CHUNKS = 16
 MAX_RAW_OUTPUT_CHARS = 12_000
-MAX_REVIEW_SECONDS = 12 * 60
+MAX_REVIEW_SECONDS = 14 * 60
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 NUM_CTX = 8192
-NUM_PREDICT = 1024
+NUM_PREDICT = 1536
 CONTEXT_SAFETY_RATIO = 0.90
 
 
@@ -136,16 +136,22 @@ def _git_output(args: list[str], timeout: int = 30) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
-def _iter_lf_lines(value: str):
-    """Yield physical patch lines using LF only; U+2028 is ordinary source content."""
+def _iter_lf_line_spans(value: str):
+    """Yield LF-delimited source spans without copying potentially huge lines."""
     start = 0
     while start < len(value):
         end = value.find("\n", start)
         if end < 0:
-            yield value[start:]
+            yield start, len(value)
             return
-        yield value[start : end + 1]
+        yield start, end + 1
         start = end + 1
+
+
+def _iter_lf_lines(value: str):
+    """Yield physical patch lines using LF only; U+2028 is ordinary source content."""
+    for start, end in _iter_lf_line_spans(value):
+        yield value[start:end]
 
 
 def _split_utf8_text(
@@ -153,7 +159,12 @@ def _split_utf8_text(
     byte_limit: int,
     max_parts: int | None = None,
 ) -> list[str]:
-    """Split UTF-8 text on LF boundaries; optionally stop after a bounded prefix."""
+    """Split UTF-8 text on LF boundaries and stop without copying unneeded tails."""
+    if byte_limit <= 0:
+        raise ValueError("byte_limit must be positive")
+    if max_parts is not None and max_parts <= 0:
+        raise ValueError("max_parts must be positive")
+
     parts: list[str] = []
     current: list[str] = []
     current_bytes = 0
@@ -165,39 +176,50 @@ def _split_utf8_text(
             current = []
             current_bytes = 0
 
-    def split_oversized_line(line: str, remaining_parts: int | None) -> list[str]:
-        fragments: list[str] = []
-        fragment: list[str] = []
-        fragment_bytes = 0
-        for character in line:
-            size = len(character.encode("utf-8"))
-            if size > byte_limit:
-                raise ValueError("A single UTF-8 code point exceeds the configured chunk limit")
-            if fragment and fragment_bytes + size > byte_limit:
-                fragments.append("".join(fragment))
-                if remaining_parts is not None and len(fragments) >= remaining_parts:
-                    return fragments
-                fragment = []
-                fragment_bytes = 0
-            fragment.append(character)
-            fragment_bytes += size
-        if fragment:
-            fragments.append("".join(fragment))
-        return fragments
-
-    for line in _iter_lf_lines(value):
+    for line_start, line_end in _iter_lf_line_spans(value):
         if max_parts is not None and len(parts) >= max_parts:
             break
-        line_bytes = len(line.encode("utf-8"))
-        if line_bytes > byte_limit:
-            flush()
-            remaining = None if max_parts is None else max_parts - len(parts)
-            parts.extend(split_oversized_line(line, remaining))
+
+        line_length = line_end - line_start
+        line = None
+        line_bytes = None
+        if line_length <= byte_limit:
+            line = value[line_start:line_end]
+            line_bytes = len(line.encode("utf-8"))
+
+        if line is not None and line_bytes is not None and line_bytes <= byte_limit:
+            if current and current_bytes + line_bytes > byte_limit:
+                flush()
+            if max_parts is not None and len(parts) >= max_parts:
+                break
+            current.append(line)
+            current_bytes += line_bytes
             continue
-        if current and current_bytes + line_bytes > byte_limit:
-            flush()
-        current.append(line)
-        current_bytes += line_bytes
+
+        # Oversized line: scan only enough code points to fill the requested
+        # prefix. Do not encode or copy a multi-megabyte line in its entirety.
+        flush()
+        if max_parts is not None and len(parts) >= max_parts:
+            break
+
+        fragment_start = line_start
+        fragment_bytes = 0
+        for character_index in range(line_start, line_end):
+            size = len(value[character_index].encode("utf-8"))
+            if size > byte_limit:
+                raise ValueError("A single UTF-8 code point exceeds the configured chunk limit")
+            if fragment_bytes and fragment_bytes + size > byte_limit:
+                parts.append(value[fragment_start:character_index])
+                if max_parts is not None and len(parts) >= max_parts:
+                    break
+                fragment_start = character_index
+                fragment_bytes = 0
+            fragment_bytes += size
+
+        if max_parts is not None and len(parts) >= max_parts:
+            break
+        if fragment_start < line_end:
+            parts.append(value[fragment_start:line_end])
 
     flush()
     if not parts:
@@ -212,13 +234,15 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
     continuation = False
     in_hunk = False
     hunk = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-    for line in _iter_lf_lines(diff_text):
+    for line_start, line_end in _iter_lf_line_spans(diff_text):
+        line_length = line_end - line_start
         if consumed >= offset:
             break
-        if consumed + len(line) > offset:
+        if consumed + line_length > offset:
             continuation = True
             break
-        body = line[:-1] if line.endswith("\n") else line
+        body = diff_text[line_start:line_end]
+        body = body[:-1] if body.endswith("\n") else body
         body = body[:-1] if body.endswith("\r") else body
         if body.startswith("diff --git "):
             in_hunk = False
@@ -237,7 +261,7 @@ def _diff_position_at_offset(diff_text: str, offset: int) -> tuple[int | None, i
                 elif marker == " ":
                     old_line += 1
                     new_line += 1
-        consumed += len(line)
+        consumed += line_length
     return old_line, new_line, continuation
 
 def _decode_git_path(token: str) -> str:
@@ -293,9 +317,15 @@ def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
         )
         file_path = _decode_git_path(path_match.group(2)) if path_match else "(diff)"
 
-        # Reserve room for the longest segment label and the actual path.
+        # Reserve the exact label shape, a conservative line-number width,
+        # and the continuation marker before allocating bytes to diff content.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/at-least-999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/at-least-999\n".encode("utf-8")
+        ) + len(
+            (
+                f"@@ -{len(file_diff) + 1} +{len(file_diff) + 1} @@\n"
+                "# continuation of a split diff line\n"
+            ).encode("utf-8")
         )
         segment_budget = request_context_bytes - label_budget
         if segment_budget <= 0:
@@ -832,6 +862,8 @@ def main() -> int:
         f"- Maximum files: {MAX_REVIEW_FILES}\n"
         f"- Context window per request: {NUM_CTX} tokens\n"
         f"- Input safety ceiling: {CONTEXT_SAFETY_RATIO:.0%} ({int(NUM_CTX * CONTEXT_SAFETY_RATIO)} tokens)\n"
+        f"- Effective input limit after output reserve: {min(int(NUM_CTX * CONTEXT_SAFETY_RATIO), NUM_CTX - NUM_PREDICT)} tokens\n"
+        f"- Diff token budget per request: {calculate_token_budget(system_prompt=REVIEW_SYSTEM_PROMPT, user_prompt=prompt[:3000], context_window=NUM_CTX, output_reserve=NUM_PREDICT, safety_ratio=CONTEXT_SAFETY_RATIO).diff_token_budget} tokens (conservative upper bound)\n"
         f"- Output token budget per request: {NUM_PREDICT} tokens\n"
         "- Preflight token estimator: UTF-8 byte upper bound plus 128-token framing reserve (conservative estimate, not exact tokenizer count)\n"
         f"- Prompt tokens evaluated (min/max): {min(prompt_tokens) if prompt_tokens else 'unknown'}/{max(prompt_tokens) if prompt_tokens else 'unknown'}\n"
