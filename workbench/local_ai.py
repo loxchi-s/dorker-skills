@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from token_budget import calculate_token_budget, estimate_tokens_upper_bound
+
 MAX_CONTEXT_BYTES = 6_000
 MAX_TOTAL_CONTEXT_BYTES = 48_000
 MAX_REVIEW_FILES = 8
@@ -24,8 +26,9 @@ MAX_RAW_OUTPUT_CHARS = 12_000
 MAX_REVIEW_SECONDS = 12 * 60
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-NUM_CTX = 4096
-NUM_PREDICT = 768
+NUM_CTX = 8192
+NUM_PREDICT = 1024
+CONTEXT_SAFETY_RATIO = 0.90
 
 
 @dataclass(frozen=True)
@@ -251,7 +254,15 @@ def _decode_git_path(token: str) -> str:
     return decoded[2:] if decoded.startswith("b/") else decoded
 
 
-def collect_context(base_ref: str = "") -> ContextResult:
+def collect_context(base_ref: str = "", prompt_text: str = "") -> ContextResult:
+    request_budget = calculate_token_budget(
+        system_prompt=REVIEW_SYSTEM_PROMPT,
+        user_prompt=prompt_text[:3000],
+        context_window=NUM_CTX,
+        output_reserve=NUM_PREDICT,
+        safety_ratio=CONTEXT_SAFETY_RATIO,
+    )
+    request_context_bytes = min(MAX_CONTEXT_BYTES, request_budget.diff_token_budget)
     if base_ref:
         raw = _git_output(
             ["diff", "--no-ext-diff", "--no-color", "--unified=2", f"origin/{base_ref}...HEAD"]
@@ -286,7 +297,7 @@ def collect_context(base_ref: str = "") -> ContextResult:
         label_budget = len(
             f"File: {file_path} | diff segment 999/999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
         )
-        segment_budget = MAX_CONTEXT_BYTES - label_budget
+        segment_budget = request_context_bytes - label_budget
         if segment_budget <= 0:
             omitted_files += 1
             continue
@@ -383,6 +394,21 @@ def ask_model(
     timeout_seconds: float = 240.0,
 ) -> ModelResponse:
     system = REVIEW_SYSTEM_PROMPT
+    request_budget = calculate_token_budget(
+        system_prompt=system,
+        user_prompt=prompt[:3000],
+        context_window=NUM_CTX,
+        output_reserve=NUM_PREDICT,
+        safety_ratio=CONTEXT_SAFETY_RATIO,
+    )
+    estimated_input_tokens = (
+        request_budget.fixed_prompt_tokens + estimate_tokens_upper_bound(context)
+    )
+    if estimated_input_tokens > request_budget.input_limit:
+        raise RuntimeError(
+            f"Request rejected before inference: estimated input {estimated_input_tokens} "
+            f"tokens exceeds the safe {request_budget.input_limit}-token input budget."
+        )
     payload = {
         "model": model,
         "system": system,
@@ -430,10 +456,14 @@ def model_response_incomplete_reason(result: ModelResponse) -> str | None:
         reasons.append("Ollama stopped generation at the output token limit (done_reason=length).")
     if result.prompt_eval_count is None:
         reasons.append("Ollama did not return prompt_eval_count; prompt context usage cannot be verified.")
-    elif result.prompt_eval_count + NUM_PREDICT >= NUM_CTX:
+    elif (
+        result.prompt_eval_count > int(NUM_CTX * CONTEXT_SAFETY_RATIO)
+        or result.prompt_eval_count + NUM_PREDICT > NUM_CTX
+    ):
         reasons.append(
             f"Prompt used {result.prompt_eval_count}/{NUM_CTX} context tokens; "
-            f"the requested {NUM_PREDICT}-token output budget does not fit with a safety margin."
+            f"the request exceeds the {CONTEXT_SAFETY_RATIO:.0%} input ceiling "
+            f"or leaves insufficient room for {NUM_PREDICT} output tokens."
         )
     if result.done_reason is None:
         reasons.append("Ollama did not return done_reason; generation completion cannot be verified.")
@@ -764,7 +794,7 @@ def main() -> int:
     started = time.monotonic()
 
     try:
-        context_result = collect_context(base_ref)
+        context_result = collect_context(base_ref, prompt)
         chunk_reviews = review_context_chunks(context_result.chunks, model, prompt)
         review = build_aggregate_report(chunk_reviews, context_result.omitted_files)
         prompt_tokens = [
@@ -801,7 +831,9 @@ def main() -> int:
         f"- Total context limit: {MAX_TOTAL_CONTEXT_BYTES} UTF-8 bytes\n"
         f"- Maximum files: {MAX_REVIEW_FILES}\n"
         f"- Context window per request: {NUM_CTX} tokens\n"
+        f"- Input safety ceiling: {CONTEXT_SAFETY_RATIO:.0%} ({int(NUM_CTX * CONTEXT_SAFETY_RATIO)} tokens)\n"
         f"- Output token budget per request: {NUM_PREDICT} tokens\n"
+        "- Preflight token estimator: UTF-8 byte upper bound plus 128-token framing reserve (conservative estimate, not exact tokenizer count)\n"
         f"- Prompt tokens evaluated (min/max): {min(prompt_tokens) if prompt_tokens else 'unknown'}/{max(prompt_tokens) if prompt_tokens else 'unknown'}\n"
         f"- Output tokens generated (total): {sum(output_tokens)}\n"
         f"- Generation stop reasons: {', '.join(stop_reasons) if stop_reasons else 'unknown'}\n"
