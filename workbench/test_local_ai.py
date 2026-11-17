@@ -117,6 +117,50 @@ Add test
 """
         self.assertFalse(validate_review_output(review))
 
+    def test_rejects_second_finding_missing_required_fields(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+#### Finding 1
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence: Concrete evidence
+- Impact: Concrete impact
+- Fix: Concrete fix
+
+#### Finding 2
+- Severity: Medium
+- File: workbench/test_local_ai.py:10
+
+## Risks and Unknowns
+Unknown
+
+## Tests Needed
+Add regression test
+"""
+        self.assertFalse(validate_review_output(review))
+
+    def test_rejects_empty_field_without_consuming_next_line(self):
+        review = """## Verdict
+REVIEW_REQUIRED
+
+## Findings
+#### Finding 1
+- Severity: High
+- File: workbench/local_ai.py:42
+- Evidence:
+- Impact: Concrete impact
+- Fix: Concrete fix
+
+## Risks and Unknowns
+Unknown
+
+## Tests Needed
+Add regression test
+"""
+        self.assertFalse(validate_review_output(review))
+
     def test_accepts_no_actionable_findings_with_required_sections(self):
         review = """## Verdict
 NO_ACTIONABLE_FINDINGS
@@ -168,13 +212,14 @@ class ContextBoundsTests(unittest.TestCase):
         self.assertEqual(6_000, MAX_CONTEXT_BYTES)
 
     def test_collect_context_returns_text(self):
-        self.assertIsInstance(collect_context(), str)
+        self.assertIsInstance(collect_context().text, str)
 
     @patch("local_ai._git_output")
     def test_collect_context_enforces_utf8_byte_limit(self, git_output):
         git_output.return_value = "界" * MAX_CONTEXT_BYTES
         context = collect_context("main")
-        self.assertLessEqual(len(context.encode("utf-8")), MAX_CONTEXT_BYTES)
+        self.assertLessEqual(len(context.text.encode("utf-8")), MAX_CONTEXT_BYTES)
+        self.assertTrue(context.truncated)
 
 
 if __name__ == "__main__":
