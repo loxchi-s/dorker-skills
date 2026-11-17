@@ -247,76 +247,100 @@ def collect_context(base_ref: str = "") -> ContextResult:
     if not file_diffs:
         file_diffs = [safe]
 
-    chunks: list[ContextChunk] = []
-    remaining_bytes = MAX_TOTAL_CONTEXT_BYTES
-    omitted_files = 0
-    reviewed_files = 0
-
-    for file_index, file_diff in enumerate(file_diffs):
-        if reviewed_files >= MAX_REVIEW_FILES or len(chunks) >= MAX_REVIEW_CHUNKS or remaining_bytes <= 0:
-            omitted_files += len(file_diffs) - file_index
-            break
-
+    # Prepare segments for every eligible file before allocating the global
+    # chunk budget. Round-robin allocation prevents one large file from
+    # consuming all review slots and hiding every later changed file.
+    file_plans: list[dict[str, object]] = []
+    omitted_files = max(0, len(file_diffs) - MAX_REVIEW_FILES)
+    for file_diff in file_diffs[:MAX_REVIEW_FILES]:
         lines = file_diff.splitlines()
         header = lines[0] if lines else ""
         path_match = re.match(
-            r'^diff --git ("(?:\\.|[^"\\])*"|\S+) ("(?:\\.|[^"\\])*"|\S+)$',
+            r'^diff --git ("(?:\\.|[^"\\])*"|\\S+) ("(?:\\.|[^"\\])*"|\\S+)$',
             header,
         )
         file_path = _decode_git_path(path_match.group(2)) if path_match else "(diff)"
-        reviewed_files += 1
 
         # Reserve room for the longest segment label and the actual path.
         label_budget = len(
-            f"File: {file_path} | diff segment 999/999\nPosition old=999999 new=999999 continuation=1\n".encode("utf-8")
+            f"File: {file_path} | diff segment 999/999\\nPosition old=999999 new=999999 continuation=1\\n".encode("utf-8")
         )
         segment_budget = MAX_CONTEXT_BYTES - label_budget
         if segment_budget <= 0:
-            omitted_files += 1 + len(file_diffs) - file_index - 1
-            break
+            omitted_files += 1
+            continue
+
         raw_segments = _split_utf8_text(file_diff, segment_budget)
         total_segments = len(raw_segments)
-        file_chunks: list[ContextChunk] = []
-        file_incomplete = False
-
+        prepared: list[ContextChunk] = []
         consumed_chars = 0
         for segment_index, segment in enumerate(raw_segments, start=1):
             old_position, new_position, continuation = _diff_position_at_offset(file_diff, consumed_chars)
-            position = f"@@ -{old_position} +{new_position} @@\n" if old_position is not None and new_position is not None else ""
+            position = (
+                f"@@ -{old_position} +{new_position} @@\\n"
+                if old_position is not None and new_position is not None
+                else ""
+            )
             if continuation:
-                position += "# continuation of a split diff line\n"
-            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\n"
-            chunk_text = label + position + segment
+                position += "# continuation of a split diff line\\n"
+            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
+            prepared.append(
+                ContextChunk(path=file_path, text=label + position + segment, truncated=False)
+            )
             consumed_chars += len(segment)
-            
-            chunk_bytes = len(chunk_text.encode("utf-8"))
-            separator_bytes = 2 if chunks or file_chunks else 0
-            if len(chunks) + len(file_chunks) >= MAX_REVIEW_CHUNKS or chunk_bytes + separator_bytes > remaining_bytes:
-                file_incomplete = True
-                break
-            file_chunks.append(ContextChunk(path=file_path, text=chunk_text, truncated=False))
-            remaining_bytes -= chunk_bytes + separator_bytes
 
-        if file_incomplete:
-            omitted_files += 1
-            if file_chunks:
-                last = file_chunks[-1]
-                file_chunks[-1] = ContextChunk(path=last.path, text=last.text, truncated=True)
-            else:
-                marker = f"File: {file_path} | omitted because review bounds were exhausted"
-                marker = marker[:MAX_CONTEXT_BYTES]
-                file_chunks.append(ContextChunk(path=file_path, text=marker, truncated=True))
-                remaining_bytes = max(0, remaining_bytes - len(marker.encode("utf-8")))
-            chunks.extend(file_chunks)
-            omitted_files += len(file_diffs) - file_index - 1
+        file_plans.append({"segments": prepared, "next": 0, "last_index": None})
+
+    chunks: list[ContextChunk] = []
+    remaining_bytes = MAX_TOTAL_CONTEXT_BYTES
+
+    while len(chunks) < MAX_REVIEW_CHUNKS:
+        made_progress = False
+        for plan in file_plans:
+            segments = plan["segments"]
+            next_index = plan["next"]
+            if next_index >= len(segments) or len(chunks) >= MAX_REVIEW_CHUNKS:
+                continue
+
+            candidate = segments[next_index]
+            separator_bytes = 2 if chunks else 0
+            candidate_bytes = len(candidate.text.encode("utf-8"))
+            if candidate_bytes + separator_bytes > remaining_bytes:
+                continue
+
+            chunks.append(candidate)
+            plan["next"] = next_index + 1
+            plan["last_index"] = len(chunks) - 1
+            remaining_bytes -= candidate_bytes + separator_bytes
+            made_progress = True
+
+        if not made_progress:
             break
 
-        chunks.extend(file_chunks)
+    # Any file whose segments did not all fit is explicitly incomplete.
+    # Keep allocating other files even when one file has exhausted the budget.
+    for plan in file_plans:
+        if plan["next"] < len(plan["segments"]):
+            omitted_files += 1
+            last_index = plan["last_index"]
+            if last_index is not None:
+                last = chunks[last_index]
+                chunks[last_index] = ContextChunk(
+                    path=last.path,
+                    text=last.text,
+                    truncated=True,
+                )
 
     if not chunks:
-        chunks.append(ContextChunk(path="(diff)", text="No diff content fit within the configured review bounds.", truncated=True))
+        chunks.append(
+            ContextChunk(
+                path="(diff)",
+                text="No diff content fit within the configured review bounds.",
+                truncated=True,
+            )
+        )
 
-    combined_text = "\n\n".join(chunk.text for chunk in chunks)
+    combined_text = "\\n\\n".join(chunk.text for chunk in chunks)
     truncated = omitted_files > 0 or any(chunk.truncated for chunk in chunks)
     return ContextResult(
         text=combined_text,
@@ -324,7 +348,6 @@ def collect_context(base_ref: str = "") -> ContextResult:
         chunks=tuple(chunks),
         omitted_files=omitted_files,
     )
-
 
 def ask_model(
     model: str,
