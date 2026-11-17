@@ -317,6 +317,17 @@ _REQUIRED_REVIEW_SECTIONS = ("Verdict", "Findings", "Risks and Unknowns", "Tests
 _VALID_VERDICTS = {"REVIEW_REQUIRED", "NO_ACTIONABLE_FINDINGS", "INCOMPLETE"}
 
 
+def _unwrap_evidence(value: str) -> str:
+    """Remove only an outer Markdown code-span wrapper, preserving inner backticks."""
+    evidence = value.strip()
+    tick = chr(96)
+    if evidence.startswith(tick * 3) and evidence.endswith(tick * 3):
+        return evidence[3:-3].strip()
+    if evidence.startswith(tick) and evidence.endswith(tick) and tick not in evidence[1:-1]:
+        return evidence[1:-1].strip()
+    return evidence
+
+
 def validate_review_output(
     review: str,
     diff_context: str | None = None,
@@ -404,7 +415,7 @@ def validate_review_output(
                 and not line.startswith(("+++", "---"))
                 and line[1:].strip()
             ]
-            evidence = values["Evidence"].replace(chr(96), "").strip()
+            evidence = _unwrap_evidence(values["Evidence"])
             if not changed_lines or not any(changed_line in evidence for changed_line in changed_lines):
                 return False
     return validated_findings > 0
