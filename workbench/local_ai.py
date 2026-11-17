@@ -16,6 +16,9 @@ import urllib.request
 from pathlib import Path
 
 MAX_CONTEXT_BYTES = 6_000
+MAX_TOTAL_CONTEXT_BYTES = 24_000
+MAX_REVIEW_FILES = 8
+MAX_RAW_OUTPUT_CHARS = 12_000
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 NUM_CTX = 4096
@@ -23,9 +26,27 @@ NUM_PREDICT = 768
 
 
 @dataclass(frozen=True)
+class ContextChunk:
+    path: str
+    text: str
+    truncated: bool
+
+
+@dataclass(frozen=True)
 class ContextResult:
     text: str
     truncated: bool
+    chunks: tuple[ContextChunk, ...]
+    omitted_files: int
+
+
+@dataclass(frozen=True)
+class ChunkReview:
+    path: str
+    status: str
+    text: str
+    reason: str | None
+    model_response: ModelResponse | None
 
 
 @dataclass(frozen=True)
