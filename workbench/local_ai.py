@@ -16,8 +16,9 @@ import urllib.request
 from pathlib import Path
 
 MAX_CONTEXT_BYTES = 6_000
-MAX_TOTAL_CONTEXT_BYTES = 24_000
+MAX_TOTAL_CONTEXT_BYTES = 48_000
 MAX_REVIEW_FILES = 8
+MAX_REVIEW_CHUNKS = 8
 MAX_RAW_OUTPUT_CHARS = 12_000
 MAX_REVIEW_SECONDS = 12 * 60
 DEFAULT_MODEL = "qwen2.5:1.5b"
@@ -106,6 +107,26 @@ def _git_output(args: list[str], timeout: int = 30) -> str:
     return result.stdout.decode("utf-8", errors="replace")
 
 
+def _split_utf8_text(value: str, byte_limit: int) -> list[str]:
+    """Split text on Unicode code-point boundaries without dropping content."""
+    parts: list[str] = []
+    current: list[str] = []
+    current_bytes = 0
+    for character in value:
+        size = len(character.encode("utf-8"))
+        if current and current_bytes + size > byte_limit:
+            parts.append("".join(current))
+            current = []
+            current_bytes = 0
+        if size > byte_limit:
+            raise ValueError("A single UTF-8 code point exceeds the configured chunk limit")
+        current.append(character)
+        current_bytes += size
+    if current or not parts:
+        parts.append("".join(current))
+    return parts
+
+
 def collect_context(base_ref: str = "") -> ContextResult:
     if base_ref:
         raw = _git_output(
@@ -127,29 +148,57 @@ def collect_context(base_ref: str = "") -> ContextResult:
     chunks: list[ContextChunk] = []
     remaining_bytes = MAX_TOTAL_CONTEXT_BYTES
     omitted_files = 0
+    reviewed_files = 0
 
-    for index, file_diff in enumerate(file_diffs):
-        if index >= MAX_REVIEW_FILES or remaining_bytes <= 0:
-            omitted_files = len(file_diffs) - index
+    for file_index, file_diff in enumerate(file_diffs):
+        if reviewed_files >= MAX_REVIEW_FILES or len(chunks) >= MAX_REVIEW_CHUNKS or remaining_bytes <= 0:
+            omitted_files += len(file_diffs) - file_index
             break
 
         lines = file_diff.splitlines()
         header = lines[0] if lines else ""
         path_match = re.match(r"^diff --git a/.* b/(.*)$", header)
         file_path = path_match.group(1) if path_match else "(diff)"
-        allowed_bytes = min(MAX_CONTEXT_BYTES, remaining_bytes)
-        encoded = file_diff.encode("utf-8")
-        was_truncated = len(encoded) > allowed_bytes
-        chunk_text = encoded[:allowed_bytes].decode("utf-8", errors="ignore")
-        chunks.append(ContextChunk(path=file_path, text=chunk_text, truncated=was_truncated))
-        remaining_bytes -= len(chunk_text.encode("utf-8"))
+        reviewed_files += 1
 
-        # Continue to later files; this chunk is incomplete, but later files may still fit the total budget.
+        # Reserve room for a stable file/segment label in every model request.
+        label_budget = 160
+        segment_budget = MAX_CONTEXT_BYTES - label_budget
+        raw_segments = _split_utf8_text(file_diff, segment_budget)
+        total_segments = len(raw_segments)
+        file_chunks: list[ContextChunk] = []
+        file_incomplete = False
+
+        for segment_index, segment in enumerate(raw_segments, start=1):
+            label = f"File: {file_path} | diff segment {segment_index}/{total_segments}\\n"
+            chunk_text = label + segment
+            chunk_bytes = len(chunk_text.encode("utf-8"))
+            if len(chunks) + len(file_chunks) >= MAX_REVIEW_CHUNKS or chunk_bytes > remaining_bytes:
+                file_incomplete = True
+                break
+            file_chunks.append(ContextChunk(path=file_path, text=chunk_text, truncated=False))
+            remaining_bytes -= chunk_bytes
+
+        if file_incomplete:
+            omitted_files += 1
+            if file_chunks:
+                last = file_chunks[-1]
+                file_chunks[-1] = ContextChunk(path=last.path, text=last.text, truncated=True)
+            else:
+                marker = f"File: {file_path} | omitted because review bounds were exhausted"
+                marker = marker[:MAX_CONTEXT_BYTES]
+                file_chunks.append(ContextChunk(path=file_path, text=marker, truncated=True))
+                remaining_bytes = max(0, remaining_bytes - len(marker.encode("utf-8")))
+            chunks.extend(file_chunks)
+            omitted_files += len(file_diffs) - file_index - 1
+            break
+
+        chunks.extend(file_chunks)
 
     if not chunks:
-        chunks.append(ContextChunk(path="(diff)", text="", truncated=True))
+        chunks.append(ContextChunk(path="(diff)", text="No diff content fit within the configured review bounds.", truncated=True))
 
-    combined_text = "\n\n".join(chunk.text for chunk in chunks)
+    combined_text = "\\n\\n".join(chunk.text for chunk in chunks)
     truncated = omitted_files > 0 or any(chunk.truncated for chunk in chunks)
     return ContextResult(
         text=combined_text,
