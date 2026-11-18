@@ -34,12 +34,16 @@ class ArtifactManifest:
                 raise ValueError("name must be a plain filename, not a path")
         if isinstance(self.size_bytes, bool) or not isinstance(self.size_bytes, int) or self.size_bytes < 0:
             raise ValueError("size_bytes must be a non-negative integer")
-        if (not isinstance(self.sha256, str) or len(self.sha256) != 64):
-            raise ValueError("sha256 must be a 64-character hex digest")
+        if (
+            not isinstance(self.sha256, str)
+            or len(self.sha256) != 64
+            or self.sha256 != self.sha256.lower()
+        ):
+            raise ValueError("sha256 must be a lowercase 64-character hex digest")
         try:
             int(self.sha256, 16)
         except ValueError as exc:
-            raise ValueError("sha256 must be a 64-character hex digest") from exc
+            raise ValueError("sha256 must be a lowercase 64-character hex digest") from exc
         if self.execution_id is not None:
             if (not isinstance(self.execution_id, str) or not self.execution_id
                     or len(self.execution_id) > 128
@@ -72,7 +76,7 @@ class ArtifactManifest:
             raise ValueError("max_bytes must be a non-negative integer")
         if len(data) > max_bytes or len(data) != self.size_bytes:
             return False
-        return hmac.compare_digest(hashlib.sha256(data).hexdigest(), self.sha256.lower())
+        return hmac.compare_digest(hashlib.sha256(data).hexdigest(), self.sha256)
 
     def to_json(self) -> str:
         return json.dumps(
@@ -80,7 +84,7 @@ class ArtifactManifest:
                 "name": self.name,
                 "media_type": self.media_type,
                 "size_bytes": self.size_bytes,
-                "sha256": self.sha256.lower(),
+                "sha256": self.sha256,
                 "source": self.source,
                 "execution_id": self.execution_id,
                 "created_at_unix_ms": self.created_at_unix_ms,
