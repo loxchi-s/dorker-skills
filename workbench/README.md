@@ -77,7 +77,7 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - Ollama container: capped at 2 CPU cores, 4 GiB RAM, and 256 processes.
 - Model: qwen2.5:1.5b; model weights are downloaded on each fresh runner unless a cache is
   added later. No GPU is requested.
-- Job timeout: 40 minutes; model review is split into diff chunks capped at 6,000 UTF-8
+- Job timeout: 70 minutes; model review is split into diff chunks capped at 6,000 UTF-8
   bytes per chunk and 96,000 UTF-8 bytes total. A single changed file can span multiple chunks;
   at most 16 changed files and 24 review chunks are processed. The review inference phase
   has a 25-minute total budget and each model request has a maximum 120-second timeout.
