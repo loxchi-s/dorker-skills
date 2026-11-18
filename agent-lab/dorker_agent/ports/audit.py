@@ -5,10 +5,7 @@ from typing import Protocol
 
 from ..domain.audit import AuthorizationResult, VerifiedApprovalEvidence
 from ..domain.identity import GitHubActorClaim, VerifiedGitHubActor
-
-
-class IdentityVerifier(Protocol):
-    def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor: ...
+from .identity import GitHubIdentityVerifier as IdentityVerifier
 
 
 class ApprovalEvidenceVerifier(Protocol):
