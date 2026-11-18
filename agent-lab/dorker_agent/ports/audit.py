@@ -4,8 +4,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from ..domain.audit import AuthorizationResult, VerifiedApprovalEvidence
-from ..domain.identity import GitHubActorClaim, VerifiedGitHubActor
-from .identity import GitHubIdentityVerifier as IdentityVerifier
+from ..domain.identity import VerifiedGitHubActor
 
 
 class ApprovalEvidenceVerifier(Protocol):
