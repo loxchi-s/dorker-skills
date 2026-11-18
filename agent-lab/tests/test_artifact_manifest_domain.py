@@ -53,6 +53,17 @@ class ArtifactManifestDomainTests(unittest.TestCase):
         self.assertEqual(json.loads(encoded)["execution_id"], "exec-1")
         self.assertEqual(json.loads(encoded)["created_at_unix_ms"], 123)
 
+    def test_rejects_non_canonical_uppercase_digest(self):
+        digest = hashlib.sha256(b"payload").hexdigest().upper()
+        with self.assertRaisesRegex(ValueError, "lowercase"):
+            ArtifactManifest(
+                name="result.bin",
+                media_type="application/octet-stream",
+                size_bytes=len(b"payload"),
+                sha256=digest,
+                source="unit-test",
+            )
+
     def test_rejects_path_like_artifact_names(self):
         with self.assertRaisesRegex(ValueError, "plain filename"):
             ArtifactManifest(
