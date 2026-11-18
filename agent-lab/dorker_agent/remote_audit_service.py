@@ -18,7 +18,11 @@ from .adapters.persistence.in_memory_audit_repository import InMemoryAuditReposi
 from .adapters.persistence.sqlite_audit_repository import SQLiteAuditRepository
 from .application.errors import AuditServiceError
 from .domain.audit import AuthorizationResult, VerifiedApprovalEvidence
-from .domain.audit_hashing import canonical_hash as _domain_canonical_hash
+from .domain.audit_hashing import (
+    ZERO_HASH as _ZERO_HASH,
+    canonical_hash as _domain_canonical_hash,
+    event_hash as _event_hash,
+)
 from .ports.audit import (
     ApprovalEvidenceVerifier,
     AuditRepository,
