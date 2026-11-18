@@ -10,6 +10,7 @@ from dorker_agent.domain.artifact_gc import (
     ArtifactGCDryRun,
     ArtifactObjectInfo,
     ArtifactRetentionPolicy,
+    gc_plan_token,
 )
 
 
@@ -30,12 +31,33 @@ class ArtifactGCDomainContractTests(unittest.TestCase):
 
     def test_gc_contracts_are_immutable_value_objects(self):
         item = ArtifactObjectInfo("a" * 64, 12, 100)
-        plan = ArtifactDeletionPlan((item,), 12, 200, "b" * 64)
+        plan = ArtifactDeletionPlan((item,), 12, 200, gc_plan_token(200, (item,)))
         report = ArtifactGCDryRun(1, 0, (item,), (), (), False)
         self.assertEqual(plan.total_bytes, 12)
         self.assertEqual(report.orphaned, (item,))
         with self.assertRaises(AttributeError):
             item.size_bytes = 13
+
+    def test_gc_plan_rejects_invalid_token_and_candidate_order(self):
+        first = ArtifactObjectInfo("a" * 64, 3, 100)
+        second = ArtifactObjectInfo("b" * 64, 4, 90)
+        with self.assertRaisesRegex(ValueError, "approval token"):
+            ArtifactDeletionPlan((first,), 3, 200, "b" * 64)
+        with self.assertRaisesRegex(ValueError, "canonically ordered"):
+            ArtifactDeletionPlan(
+                (first, second),
+                7,
+                200,
+                gc_plan_token(200, (first, second)),
+            )
+
+    def test_gc_object_and_dry_run_reject_invalid_contract_values(self):
+        with self.assertRaises(ValueError):
+            ArtifactObjectInfo("A" * 64, 1, 1)
+        with self.assertRaises(ValueError):
+            ArtifactObjectInfo("a" * 64, True, 1)
+        with self.assertRaises(ValueError):
+            ArtifactGCDryRun(-1, 0, (), (), (), False)
 
     def test_execution_domain_and_adapters_respect_layer_boundaries(self):
         agent_lab = Path(__file__).resolve().parents[1]
