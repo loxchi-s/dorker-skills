@@ -36,6 +36,27 @@ class AuditDomainContractTests(unittest.TestCase):
         self.assertEqual(expected, _event_hash(event))
         self.assertEqual(canonical_hash(event), expected)
 
+    def test_remote_client_uses_the_same_canonical_hash_primitive(self):
+        event = {
+            "sequence": 1,
+            "event_id": "evt-1",
+            "event_type": "plan_created",
+            "actor_id": 42,
+            "actor_login": "octocat",
+            "timestamp": "2026-11-18T00:00:00.000Z",
+            "details": {"plan": {"size": 10}},
+            "idempotency_key": "key-1",
+            "request_hash": "a" * 64,
+            "previous_hash": ZERO_HASH,
+        }
+        from dorker_agent.remote_audit import RemoteAuditHttpClient
+
+        expected = canonical_hash(event)
+        self.assertEqual(
+            RemoteAuditHttpClient.compute_event_hash({**event, "event_hash": "ignored"}),
+            expected,
+        )
+
     def test_identity_values_are_provider_neutral(self):
         claim = GitHubActorClaim(42, "octocat", "short-lived-token")
         actor = VerifiedGitHubActor(42, "octocat")
