@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 from pathlib import Path
 
 from .domain.artifact_manifest import ArtifactManifest
+from .domain.identity import GitHubActorClaim, VerifiedGitHubActor
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -31,26 +32,6 @@ class ArtifactNotFoundError(ArtifactStoreError):
 
 class ArtifactIntegrityError(ArtifactStoreError):
     """Stored bytes do not match their content address."""
-
-
-@dataclass(frozen=True, slots=True)
-class GitHubActorClaim:
-    github_id: int
-    login: str
-    oidc_token: str
-
-
-@dataclass(frozen=True, slots=True)
-class VerifiedGitHubActor:
-    github_id: int
-    login: str
-
-
-class GitHubIdentityVerifier(Protocol):
-    """Trusted host adapter that verifies a GitHub Actions OIDC token."""
-
-    def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor:
-        """Verify token signature/claims and return its canonical GitHub actor."""
 
 
 @runtime_checkable
