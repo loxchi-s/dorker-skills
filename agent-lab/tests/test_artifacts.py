@@ -338,10 +338,12 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
             details["candidates"][0]["mtime_unix_ns"] += 1
             db.execute("UPDATE artifact_audit_log SET details_json=? WHERE action='gc_plan_created'",
                        (json.dumps(details, sort_keys=True, separators=(",", ":")),))
-        with self.assertRaisesRegex(ValueError, "recorded GC plan metadata"):
+        with self.assertRaises(ArtifactIntegrityError):
             self.index.record_gc_approval(plan.approval_token, claim=github_claim(202, "approver"),
                                           approved=True, idempotency_key="gc-tamper-approval")
-        self.assertEqual(len(self.index.list_audit_events()), 1)
+        with self.assertRaises(ArtifactIntegrityError):
+            self.index.list_audit_events()
+        self.assertFalse(self.index.verify_audit_log())
 
     def test_gc_audit_records_plan_and_approval_with_valid_hash_chain(self):
         blob = self.blobs.put(b"old-orphan", name="old", media_type="x", source="test")
@@ -474,6 +476,13 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
                 ("tampered",),
             )
         self.assertFalse(self.index.verify_audit_log())
+        with self.assertRaises(ArtifactIntegrityError):
+            self.index.list_audit_events()
+        with self.assertRaises(ArtifactIntegrityError):
+            self.index.record_gc_approval(
+                plan.approval_token, claim=github_claim(202, "approver"),
+                approved=True, idempotency_key="tampered-chain-approval",
+            )
 
     def test_index_detects_missing_blob(self):
         artifact_id = self.index.put(
