@@ -13,7 +13,7 @@ from .adapters.persistence.in_memory_audit_repository import InMemoryAuditReposi
 from .adapters.persistence.sqlite_audit_repository import SQLiteAuditRepository
 from .application.errors import AuditServiceError
 from .application.audit_validation import (
-    _strict_object, _validate_plan, validate_key as _validate_key,
+    _strict_object, _validate_plan, _DIGEST, validate_key as _validate_key,
     encode_cursor as _encode_cursor, decode_cursor as _decode_cursor,
 )
 from .domain.audit import AuthorizationResult, VerifiedApprovalEvidence
@@ -31,7 +31,6 @@ from .ports.identity import GitHubIdentityVerifier as IdentityVerifier
 from .github_oidc import OIDCVerificationError
 
 _MAX_BODY_BYTES = 64 * 1024
-_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _canonical_hash(value: dict[str, object]) -> str:
