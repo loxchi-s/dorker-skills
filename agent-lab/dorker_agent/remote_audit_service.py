@@ -10,8 +10,10 @@ from .application.remote_audit_service import (
     DefaultDenyApprovalEvidenceVerifier,
     DefaultDenyAuthorizationPolicy,
     RemoteAuditApplicationService,
+    _ZERO_HASH,
     _canonical_hash,
     _claim_from_bearer,
+    _event_hash,
 )
 from .adapters.http.audit_wsgi import AuditWSGIAdapter
 from .adapters.http.request_rate_limiter import RequestRateLimiter
@@ -59,6 +61,11 @@ class RemoteAuditService(RemoteAuditApplicationService):
             rate_limiter=request_rate_limiter or RequestRateLimiter(),
             request_timeout_seconds=float(request_timeout_seconds),
         )
+
+    @classmethod
+    def _error(cls, status: int, code: str, message: str, request_id: str, retryable: bool = False):
+        """Compatibility alias for the historical private error helper."""
+        return cls.error_response(status, code, message, request_id, retryable)
 
     def __call__(self, environ, start_response):
         return self._wsgi_adapter(environ, start_response)
