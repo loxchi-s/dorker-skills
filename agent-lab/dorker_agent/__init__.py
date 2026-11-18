@@ -63,7 +63,7 @@ _EXPORTS = {
     "AuditClientError": (".remote_audit", "AuditClientError"),
     "AuditCursorError": (".remote_audit", "AuditCursorError"),
     "AuditHTTPError": (".remote_audit", "AuditHTTPError"),
-    "RemoteAuditHttpClient": (".remote_audit", "RemoteAuditHttpClient"),
+    "RemoteAuditHTTPClient": (".remote_audit", "RemoteAuditHTTPClient"),
 
     "ExecutionRecord": (".domain.execution", "ExecutionRecord"),
     "ExecutionState": (".domain.execution", "ExecutionState"),
