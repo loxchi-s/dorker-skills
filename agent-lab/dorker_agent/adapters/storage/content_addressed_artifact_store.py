@@ -9,8 +9,8 @@ import stat
 import threading
 import uuid
 
-from ..domain.artifact_manifest import ArtifactManifest
-from ..domain.artifact_gc import ArtifactObjectInfo
+from ...domain.artifact_manifest import ArtifactManifest
+from ...domain.artifact_gc import ArtifactObjectInfo
 from .errors import ArtifactIntegrityError, ArtifactNotFoundError, ArtifactStoreError
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
