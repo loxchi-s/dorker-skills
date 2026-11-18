@@ -22,12 +22,9 @@ from typing import Protocol
 
 from .domain.artifact_manifest import ArtifactManifest
 
-from .execution import (
-    ExecutionControl,
-    ExecutionDeadlineExceeded,
-    InMemoryExecutionLedger,
-    SQLiteExecutionStore,
-)
+from .application.execution_control import ExecutionControl
+from .application.errors import ExecutionDeadlineExceeded
+from .ports.execution_ledger import ExecutionLedger
 
 _DIGEST_IMAGE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}|sha256:[0-9a-f]{64})$")
 
@@ -368,7 +365,7 @@ class DockerCLIContainerRuntime:
             pass
 
 
-Ledger = InMemoryExecutionLedger | SQLiteExecutionStore
+Ledger = ExecutionLedger
 
 
 class ContainerSandboxRunner:
