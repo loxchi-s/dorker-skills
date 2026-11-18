@@ -849,5 +849,55 @@ class RequestRateLimiterTests(unittest.TestCase):
             RequestRateLimiter(max_clients=0)
 
 
+
+
+class AuditApplicationValidationTests(unittest.TestCase):
+    def test_strict_object_rejects_duplicate_json_keys(self):
+        from dorker_agent.application.audit_validation import _strict_object
+        from dorker_agent.application.errors import AuditServiceError
+
+        with self.assertRaises(AuditServiceError):
+            _strict_object(b'{"key":1,"key":2}')
+
+    def test_idempotency_key_validation(self):
+        from dorker_agent.application.audit_validation import validate_key
+        from dorker_agent.application.errors import AuditServiceError
+
+        self.assertEqual(validate_key("job:2026-11-18"), "job:2026-11-18")
+        with self.assertRaises(AuditServiceError):
+            validate_key("invalid key")
+
+    def test_cursor_round_trip_and_rejects_invalid_offsets(self):
+        from dorker_agent.application.audit_validation import decode_cursor, encode_cursor
+        from dorker_agent.application.errors import AuditServiceError
+
+        self.assertEqual(decode_cursor(encode_cursor(123)), 123)
+        self.assertEqual(decode_cursor(None), 0)
+        with self.assertRaises(AuditServiceError):
+            encode_cursor(-1)
+        with self.assertRaises(AuditServiceError):
+            decode_cursor("not-a-cursor")
+
+    def test_plan_validation_accepts_canonical_empty_plan(self):
+        import hashlib
+        from dorker_agent.application.audit_validation import _validate_plan
+
+        payload = {"cutoff_unix_ns": 100, "candidates": []}
+        token = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        token, normalized = _validate_plan({
+            "approval_token": token, "cutoff_unix_ns": 100,
+            "total_bytes": 0, "candidates": [],
+        })
+        self.assertEqual(normalized["approval_token"], token)
+        self.assertEqual(normalized["candidates"], [])
+
+    def test_plan_validation_rejects_boolean_integer_fields(self):
+        from dorker_agent.application.audit_validation import _validate_plan
+        from dorker_agent.application.errors import AuditServiceError
+
+        with self.assertRaises(AuditServiceError):
+            _validate_plan({"approval_token": "0" * 64, "cutoff_unix_ns": True, "total_bytes": 0, "candidates": []})
+
+
 if __name__ == "__main__":
     unittest.main()
