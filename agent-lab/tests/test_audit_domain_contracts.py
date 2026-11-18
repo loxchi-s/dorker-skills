@@ -67,6 +67,7 @@ class AuditDomainContractTests(unittest.TestCase):
         claim = GitHubActorClaim(42, "octocat", "short-lived-token")
         actor = VerifiedGitHubActor(42, "octocat")
         self.assertEqual((claim.github_id, claim.login), (actor.github_id, actor.login))
+        self.assertNotIn("short-lived-token", repr(claim))
 
     def test_domain_import_does_not_load_database_or_network_adapters(self):
         code = (
