@@ -32,6 +32,7 @@ def _strict_object(raw: bytes) -> dict[str, object]:
         raise AuditServiceError(400, "invalid_request", "request body must be an object")
     return value
 
+
 def _validate_plan(value: object) -> tuple[str, dict[str, object]]:
     if not isinstance(value, dict) or set(value) != {
         "approval_token", "cutoff_unix_ns", "total_bytes", "candidates",
@@ -77,24 +78,28 @@ def _validate_plan(value: object) -> tuple[str, dict[str, object]]:
         "total_bytes": total, "candidates": normalized,
     }
 
-def validate_key(value: object) -> str
-        if not isinstance(value, str) or not _KEY.fullmatch(value):
-            raise AuditServiceError(400, "invalid_request", "idempotency key is invalid")
-        return value
+def validate_key(value: object) -> str:
+    if not isinstance(value, str) or not _KEY.fullmatch(value):
+        raise AuditServiceError(400, "invalid_request", "idempotency key is invalid")
+    return value
 
-def encode_cursor(offset: int) -> str
-        return base64.urlsafe_b64encode(str(offset).encode("ascii")).rstrip(b"=").decode("ascii")
 
-def decode_cursor(cursor: str | None) -> int
-        if cursor is None:
-            return 0
-        if not isinstance(cursor, str) or not 1 <= len(cursor) <= 128:
-            raise AuditServiceError(400, "invalid_request", "cursor is invalid")
-        try:
-            raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-            value = raw.decode("ascii")
-            if not value.isdecimal() or len(value) > 10:
-                raise ValueError("invalid cursor")
-            return int(value)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise AuditServiceError(400, "invalid_request", "cursor is invalid") from exc
+def encode_cursor(offset: int) -> str:
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise AuditServiceError(400, "invalid_request", "cursor offset is invalid")
+    return base64.urlsafe_b64encode(str(offset).encode("ascii")).rstrip(b"=").decode("ascii")
+
+
+def decode_cursor(cursor: str | None) -> int:
+    if cursor is None:
+        return 0
+    if not isinstance(cursor, str) or not 1 <= len(cursor) <= 128:
+        raise AuditServiceError(400, "invalid_request", "cursor is invalid")
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        value = raw.decode("ascii")
+        if not value.isdecimal() or len(value) > 10:
+            raise ValueError("invalid cursor")
+        return int(value)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise AuditServiceError(400, "invalid_request", "cursor is invalid") from exc
