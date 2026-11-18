@@ -4,7 +4,6 @@ This client does not verify OIDC claims or make local persistence authoritative.
 """
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import random
@@ -17,6 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Protocol
 from urllib.parse import quote, urlsplit
+
+from .domain.audit_hashing import ZERO_HASH, canonical_hash
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MAX_RESPONSE_BYTES = 256 * 1024
@@ -177,7 +178,7 @@ class RemoteAuditHttpClient:
     def list_all_audit_events(
         self, *, limit: int = 100, max_pages: int = 1000,
         expected_start_sequence: int = 1,
-        expected_previous_hash: str = "0" * 64,
+        expected_previous_hash: str = ZERO_HASH,
         expected_head_hash: str | None = None,
     ) -> list[dict[str, object]]:
         if isinstance(max_pages, bool) or not isinstance(max_pages, int) or not 1 <= max_pages <= 10_000:
@@ -260,13 +261,9 @@ class RemoteAuditHttpClient:
             raise AuditClientError("audit event does not match the canonical v1 schema")
         payload = {field: event[field] for field in fields}
         try:
-            encoded = json.dumps(
-                payload, sort_keys=True, separators=(",", ":"),
-                ensure_ascii=True, allow_nan=False,
-            ).encode("utf-8")
-        except (TypeError, ValueError) as exc:
+            return canonical_hash(payload)
+        except ValueError as exc:
             raise AuditClientError("audit event is not canonically serializable") from exc
-        return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
     def verify_event_chain(
