@@ -3,6 +3,26 @@
 A GitHub Actions-native, CPU-only local-model reviewer. It uses an ephemeral GitHub-hosted
 Ubuntu runner and a versioned Ollama container; no external AI API key is required.
 
+## Agent Lab integration
+
+The Workbench uses the provider-agnostic `dorker_agent.Agent` and its
+`ChatModel` port for each review chunk. `workbench/ollama_chat_model.py` is the
+Ollama adapter: it translates the Agent Lab system/user message contract into
+`/api/generate` requests and preserves Ollama completion metadata for the
+existing truncation and token-budget checks. The adapter is request-scoped; do
+not share one instance across concurrent requests.
+
+The workflow adds the sibling `agent-lab` package to `PYTHONPATH` for both
+unit tests and inference. When running the Workbench locally, use:
+
+```bash
+PYTHONPATH=../agent-lab python -m unittest -v
+PYTHONPATH=../agent-lab python local_ai.py
+```
+
+This is a single-turn Agent integration. It does not add autonomous planning,
+tool execution, multi-step memory, or a general-purpose context manager.
+
 ## Current scope
 
 - Manual run (workflow_dispatch) with an optional review prompt.
