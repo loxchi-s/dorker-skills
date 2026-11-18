@@ -10,3 +10,15 @@ class AuditServiceError(RuntimeError):
         self.status = status
         self.code = code
         self.retryable = retryable
+
+
+class ExecutionCancelledError(RuntimeError):
+    """Raised when an execution is explicitly cancelled."""
+
+
+class ExecutionDeadlineExceeded(TimeoutError):
+    """Raised when an execution exceeds its monotonic deadline."""
+
+
+class DuplicateExecutionError(RuntimeError):
+    """An execution identifier has already been claimed."""
