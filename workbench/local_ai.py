@@ -17,11 +17,11 @@ from ollama_chat_model import ModelResponse, OllamaChatModel
 from token_budget import calculate_token_budget, estimate_tokens_upper_bound
 
 MAX_CONTEXT_BYTES = 6_000
-MAX_TOTAL_CONTEXT_BYTES = 300_000
+MAX_TOTAL_CONTEXT_BYTES = 360_000
 MAX_REVIEW_FILES = 64
-MAX_REVIEW_CHUNKS = 64
+MAX_REVIEW_CHUNKS = 128
 MAX_RAW_OUTPUT_CHARS = 50_000
-MAX_REVIEW_SECONDS = 60 * 60
+MAX_REVIEW_SECONDS = 100 * 60
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 NUM_CTX = 8192
