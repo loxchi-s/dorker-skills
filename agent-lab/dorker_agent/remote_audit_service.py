@@ -18,14 +18,14 @@ import time
 import uuid
 from math import ceil
 from pathlib import Path
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Callable
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .domain.identity import GitHubActorClaim, VerifiedGitHubActor
-from .domain.audit import AuditServiceError, AuthorizationResult, VerifiedApprovalEvidence
-from .domain.audit_hashing import ZERO_HASH as _ZERO_HASH, canonical_hash as _canonical_hash, event_hash as _event_hash
+from .application.errors import AuditServiceError
+from .domain.audit import AuthorizationResult, VerifiedApprovalEvidence
+from .domain.audit_hashing import ZERO_HASH as _ZERO_HASH, canonical_hash as _domain_canonical_hash, event_hash as _event_hash
 from .ports.audit import (
     ApprovalEvidenceVerifier,
     AuditRepository,
@@ -38,6 +38,13 @@ _MAX_BODY_BYTES = 64 * 1024
 _MAX_EVENTS = 10_000
 _KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _canonical_hash(value: dict[str, object]) -> str:
+    try:
+        return _domain_canonical_hash(value)
+    except ValueError as exc:
+        raise AuditServiceError(400, "invalid_request", "request is not canonical JSON") from exc
 
 
 class DefaultDenyApprovalEvidenceVerifier:
