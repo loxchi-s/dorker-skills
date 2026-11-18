@@ -1,4 +1,4 @@
-"""Stable audit domain errors and immutable decision value objects."""
+"""Immutable audit domain value objects."""
 from __future__ import annotations
 
 from dataclasses import dataclass
