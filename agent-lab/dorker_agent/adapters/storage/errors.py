@@ -1,13 +1,12 @@
-"""Storage adapter exceptions for content-addressed artifact persistence."""
+"""Compatibility re-exports for artifact blob-store port errors."""
+from ...ports.artifact_blob_store import (
+    ArtifactIntegrityError,
+    ArtifactNotFoundError,
+    ArtifactStoreError,
+)
 
-
-class ArtifactStoreError(RuntimeError):
-    """Base error for artifact storage failures."""
-
-
-class ArtifactNotFoundError(ArtifactStoreError):
-    """The requested content digest is not present."""
-
-
-class ArtifactIntegrityError(ArtifactStoreError):
-    """Stored bytes do not match their content address."""
+__all__ = [
+    "ArtifactIntegrityError",
+    "ArtifactNotFoundError",
+    "ArtifactStoreError",
+]
