@@ -38,19 +38,11 @@ _MAX_BODY_BYTES = 64 * 1024
 _MAX_EVENTS = 10_000
 _KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_ZERO_HASH = "0" * 64
 
 
 class DefaultDenyApprovalEvidenceVerifier:
     def verify(self, **kwargs) -> VerifiedApprovalEvidence:
         raise AuditServiceError(403, "approval_evidence_required", "independent approval evidence is not configured")
-
-
-class AuthorizationPolicy(Protocol):
-    def authorize(
-        self, *, actor: VerifiedGitHubActor, operation: str,
-        repository_id: int, plan_token: str | None,
-    ) -> AuthorizationResult: ...
 
 
 class DefaultDenyAuthorizationPolicy:
@@ -65,20 +57,6 @@ class DefaultDenyAuthorizationPolicy:
             decision_id="policy-unconfigured",
             policy_version="default-deny-v1",
         )
-
-
-class AuditRepository(Protocol):
-    def append(
-        self, *, repository_id: int, idempotency_key: str, request_hash: str,
-        event_type: str, actor: VerifiedGitHubActor, details: dict[str, object],
-        approval_token: str | None,
-        approval_evidence: VerifiedApprovalEvidence | None = None,
-        authorization: AuthorizationResult | None = None,
-    ) -> tuple[dict[str, object], bool]: ...
-
-    def lookup(self, repository_id: int, idempotency_key: str) -> dict[str, object] | None: ...
-    def list_events(self, repository_id: int, offset: int, limit: int) -> list[dict[str, object]]: ...
-    def verify(self, repository_id: int) -> bool: ...
 
 
 def _strict_object(raw: bytes) -> dict[str, object]:
