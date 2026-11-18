@@ -78,6 +78,7 @@ class AuditDomainContractTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=env,
+            cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
@@ -93,6 +94,7 @@ class AuditDomainContractTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=dict(os.environ),
+            cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
