@@ -40,6 +40,32 @@ if loaded:
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_runtime_adapters_depend_on_execution_port_not_compatibility_facade(self):
+        agent_lab_root = Path(__file__).resolve().parents[1]
+        script = """
+import sys
+import dorker_agent.container_sandbox
+import dorker_agent.framework_adapters
+import dorker_agent.isolated_worker
+from dorker_agent.ports.execution_ledger import ExecutionLedger
+
+assert ExecutionLedger is not None
+assert "dorker_agent.execution" not in sys.modules
+assert "sqlite3" not in sys.modules
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(agent_lab_root)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=agent_lab_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
