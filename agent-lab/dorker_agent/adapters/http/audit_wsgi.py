@@ -25,12 +25,12 @@ class AuditWSGIAdapter:
         allowed, retry_after = self._rate_limiter.allow(client_key)
         acquired = False
         if not allowed:
-            status, headers, payload = self._service._error(
+            status, headers, payload = self._service.error_response(
                 429, "rate_limited", "request rate limit exceeded", str(uuid.uuid4()),
             )
             headers["Retry-After"] = str(retry_after)
         elif not self._request_slots.acquire(blocking=False):
-            status, headers, payload = self._service._error(
+            status, headers, payload = self._service.error_response(
                 503, "capacity_limited", "request concurrency limit reached", str(uuid.uuid4()), True,
             )
             headers["Retry-After"] = "1"
@@ -43,21 +43,21 @@ class AuditWSGIAdapter:
                 except (TypeError, ValueError):
                     length = -1
                 if length < 0:
-                    status, headers, payload = self._service._error(
+                    status, headers, payload = self._service.error_response(
                         400, "invalid_request", "Content-Length is invalid", str(uuid.uuid4()),
                     )
                 elif length > _MAX_BODY_BYTES:
-                    status, headers, payload = self._service._error(
+                    status, headers, payload = self._service.error_response(
                         413, "invalid_request", "request body exceeds 64 KiB", str(uuid.uuid4()),
                     )
                 elif time.monotonic() - started >= self._request_timeout_seconds:
-                    status, headers, payload = self._service._error(
+                    status, headers, payload = self._service.error_response(
                         408, "request_timeout", "request deadline exceeded", str(uuid.uuid4()), True,
                     )
                 else:
                     stream = environ.get("wsgi.input")
                     if length and not callable(getattr(stream, "read", None)):
-                        status, headers, payload = self._service._error(
+                        status, headers, payload = self._service.error_response(
                             400, "invalid_request", "request body stream is invalid", str(uuid.uuid4()),
                         )
                     else:
@@ -66,11 +66,11 @@ class AuditWSGIAdapter:
                         except Exception:
                             body = None
                         if not isinstance(body, bytes) or len(body) != length:
-                            status, headers, payload = self._service._error(
+                            status, headers, payload = self._service.error_response(
                                 400, "invalid_request", "request body could not be read completely", str(uuid.uuid4()),
                             )
                         elif time.monotonic() - started >= self._request_timeout_seconds:
-                            status, headers, payload = self._service._error(
+                            status, headers, payload = self._service.error_response(
                                 408, "request_timeout", "request body deadline exceeded", str(uuid.uuid4()), True,
                             )
                         else:
@@ -84,7 +84,7 @@ class AuditWSGIAdapter:
                                 or not isinstance(target, str)
                                 or not isinstance(query, str)
                             ):
-                                status, headers, payload = self._service._error(
+                                status, headers, payload = self._service.error_response(
                                     431, "invalid_request", "request headers or target exceed service limits", str(uuid.uuid4()),
                                 )
                             else:
@@ -93,7 +93,7 @@ class AuditWSGIAdapter:
                                     target += "?" + query
                                 status, headers, payload = self._service.handle(method, target, headers_in, body)
                                 if time.monotonic() - started > self._request_timeout_seconds:
-                                    status, headers, payload = self._service._error(
+                                    status, headers, payload = self._service.error_response(
                                         504, "request_deadline_exceeded", "request processing deadline exceeded", str(uuid.uuid4()), True,
                                     )
             finally:
