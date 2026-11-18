@@ -9,8 +9,8 @@ import re
 import sqlite3
 import time
 from contextlib import closing
-from pathlib import Path
 import threading
+from pathlib import Path
 
 from ...domain.artifact_manifest import ArtifactManifest
 from ...domain.artifact_gc import (
