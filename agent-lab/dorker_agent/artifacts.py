@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .domain.artifact_manifest import ArtifactManifest
 from .domain.identity import GitHubActorClaim, VerifiedGitHubActor
+from .ports.identity import GitHubIdentityVerifier
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
