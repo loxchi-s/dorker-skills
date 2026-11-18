@@ -15,7 +15,11 @@ from dorker_agent.remote_audit_service import (
     VerifiedApprovalEvidence as LegacyVerifiedApprovalEvidence,
     _ZERO_HASH,
     _event_hash,
+    InMemoryAuditRepository as LegacyInMemoryAuditRepository,
+    SQLiteAuditRepository as LegacySQLiteAuditRepository,
 )
+from dorker_agent.adapters.persistence.in_memory_audit_repository import InMemoryAuditRepository
+from dorker_agent.adapters.persistence.sqlite_audit_repository import SQLiteAuditRepository
 
 
 class AuditDomainContractTests(unittest.TestCase):
@@ -24,6 +28,8 @@ class AuditDomainContractTests(unittest.TestCase):
         self.assertIs(LegacyAuthorizationResult, AuthorizationResult)
         self.assertIs(LegacyVerifiedApprovalEvidence, VerifiedApprovalEvidence)
         self.assertEqual(_ZERO_HASH, ZERO_HASH)
+        self.assertIs(LegacyInMemoryAuditRepository, InMemoryAuditRepository)
+        self.assertIs(LegacySQLiteAuditRepository, SQLiteAuditRepository)
 
     def test_hashing_is_deterministic_and_excludes_hash_field(self):
         event = {
@@ -82,10 +88,12 @@ class AuditDomainContractTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_postgres_adapter_does_not_import_service_implementation(self):
+    def test_persistence_adapters_do_not_import_service_implementation(self):
         code = (
             "import sys; "
             "from dorker_agent.postgres_audit_repository import PostgresAuditRepository; "
+            "from dorker_agent.adapters.persistence.in_memory_audit_repository import InMemoryAuditRepository; "
+            "from dorker_agent.adapters.persistence.sqlite_audit_repository import SQLiteAuditRepository; "
             "assert 'dorker_agent.remote_audit_service' not in sys.modules"
         )
         completed = subprocess.run(
