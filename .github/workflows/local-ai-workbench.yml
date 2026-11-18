@@ -7,7 +7,7 @@ on:
         description: Review instruction (optional)
         required: false
         type: string
-        default: "Review this change for correctness, security, reliability, and missing tests."
+        default: "Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing."
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_call:
@@ -16,7 +16,7 @@ on:
         description: Review instruction
         required: false
         type: string
-        default: "Review this change for correctness, security, reliability, and missing tests."
+        default: "Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing."
       implementation_ref:
         description: Full 40-character commit SHA for the Workbench implementation (must match the reusable workflow ref)
         required: true
@@ -32,7 +32,7 @@ concurrency:
 jobs:
   local-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     permissions:
       contents: read
     steps:
@@ -108,7 +108,7 @@ jobs:
 
       - name: Run local model review
         env:
-          LOCAL_AI_PROMPT: ${{ inputs.prompt || 'Review this change for correctness, security, reliability, and missing tests.' }}
+          LOCAL_AI_PROMPT: ${{ inputs.prompt || 'Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing.' }}
           LOCAL_AI_MODEL: qwen2.5:1.5b
           LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
