@@ -51,6 +51,24 @@ class ArtifactGCDomainContractTests(unittest.TestCase):
                 gc_plan_token(200, (first, second)),
             )
 
+    def test_gc_plan_rejects_duplicate_candidates_and_wrong_total(self):
+        item = ArtifactObjectInfo("c" * 64, 5, 100)
+        duplicate_candidates = (item, item)
+        with self.assertRaisesRegex(ValueError, "duplicate candidate"):
+            ArtifactDeletionPlan(
+                duplicate_candidates,
+                10,
+                200,
+                gc_plan_token(200, duplicate_candidates),
+            )
+        with self.assertRaisesRegex(ValueError, "total_bytes"):
+            ArtifactDeletionPlan(
+                (item,),
+                6,
+                200,
+                gc_plan_token(200, (item,)),
+            )
+
     def test_gc_object_and_dry_run_reject_invalid_contract_values(self):
         with self.assertRaises(ValueError):
             ArtifactObjectInfo("A" * 64, 1, 1)
