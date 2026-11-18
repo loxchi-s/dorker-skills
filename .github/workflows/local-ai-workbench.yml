@@ -1,0 +1,131 @@
+name: Local AI Workbench
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: Review instruction (optional)
+        required: false
+        type: string
+        default: "Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing."
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_call:
+    inputs:
+      prompt:
+        description: Review instruction
+        required: false
+        type: string
+        default: "Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing."
+      implementation_ref:
+        description: Full 40-character commit SHA for the Workbench implementation (must match the reusable workflow ref)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-ai-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select Workbench implementation
+        shell: bash
+        env:
+          IMPLEMENTATION_REF: ${{ inputs.implementation_ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$IMPLEMENTATION_REF" ]]; then
+            # Reusable workflows receive the caller's event name, so input presence is the discriminator.
+            # Direct workflow_dispatch and pull_request runs use the checked-out revision,
+            # including runs initiated from forks.
+            echo "WORKBENCH_DIR=$GITHUB_WORKSPACE/workbench" >> "$GITHUB_ENV"
+          else
+            # External reusable callers must provide the same immutable SHA used in the workflow reference.
+            if [[ ! "$IMPLEMENTATION_REF" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::implementation_ref must be a full lowercase 40-character commit SHA."
+              exit 1
+            fi
+            workbench_dir="$RUNNER_TEMP/dorker-workbench"
+            git init "$workbench_dir"
+            git -C "$workbench_dir" remote add origin https://github.com/loxchi-s/dorker-skills.git
+            git -C "$workbench_dir" fetch --depth=1 origin "$IMPLEMENTATION_REF"
+            fetched_sha="$(git -C "$workbench_dir" rev-parse FETCH_HEAD)"
+            if [[ "$fetched_sha" != "$IMPLEMENTATION_REF" ]]; then
+              echo "::error::Fetched Workbench revision does not match implementation_ref."
+              exit 1
+            fi
+            git -C "$workbench_dir" checkout --detach FETCH_HEAD
+            echo "WORKBENCH_DIR=$workbench_dir/workbench" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure Agent Lab import path
+        shell: bash
+        run: |
+          set -euo pipefail
+          agent_lab_dir="$(cd "$(dirname "$WORKBENCH_DIR")/agent-lab" && pwd)"
+          test -f "$agent_lab_dir/dorker_agent/agent.py"
+          echo "DORKER_AGENT_LAB_DIR=$agent_lab_dir" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit test local inference client
+        working-directory: ${{ env.WORKBENCH_DIR }}
+        env:
+          PYTHONPATH: ${{ env.DORKER_AGENT_LAB_DIR }}
+        run: python -m unittest -v
+
+      - name: Start resource-limited local Ollama
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pin the linux/amd64 manifest digest; do not rely on a mutable tag.
+          docker run -d --name local-ollama --cpus=2 --memory=4g --pids-limit=256 -p 127.0.0.1:11434:11434 ollama/ollama@sha256:6697852aa235e8fb4e1e77cfab9bbf70d51d3760cb0d266e9fb43cf2b8e44f66
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:11434/api/tags >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:11434/api/tags >/dev/null
+          docker exec local-ollama ollama pull qwen2.5:1.5b
+
+      - name: Run local model review
+        env:
+          LOCAL_AI_PROMPT: "${{ inputs.prompt || 'Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing.' }}"
+          LOCAL_AI_MODEL: qwen2.5:1.5b
+          LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
+          OLLAMA_URL: http://127.0.0.1:11434
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONPATH: ${{ env.DORKER_AGENT_LAB_DIR }}
+        run: python "$WORKBENCH_DIR/local_ai.py"
+
+      - name: Upload review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-ai-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/local-ai-report.md
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop local model container
+        if: always()
+        run: docker rm -f local-ollama || true

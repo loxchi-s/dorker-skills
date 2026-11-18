@@ -1,106 +1,80 @@
-"""Dorker Agent Lab: policy-gated, provider-agnostic agent scaffold."""
+"""Dorker Agent Lab public API with lazy optional-module exports.
 
-from .agent import Agent, ChatModel, ModelMessage
-from .framework_adapters import (
-    CrewAIAdapter,
-    FrameworkExecutionError,
-    LangChainAdapter,
-)
-from .tasks import TaskRequest
-from .github_oidc import (
-    GitHubActionsJWKSProvider,
-    GitHubActionsOIDCTokenProvider,
-    GitHubActionsOIDCVerifier,
-    GitHubActionsOIDCIdentityProvider,
-    GitHubOIDCPolicy,
-    OIDCVerificationError,
-)
+Importing the Agent Core must not load unrelated framework, storage, OIDC,
+worker, or audit adapters and their optional third-party dependencies.
+"""
 
-from .artifacts import (
-    ArtifactIntegrityError,
-    ArtifactGCDryRun,
-    ArtifactRetentionPolicy,
-    ArtifactDeletionPlan,
-    ArtifactObjectInfo,
-    ArtifactNotFoundError,
-    GitHubActorClaim,
-    VerifiedGitHubActor,
-    GitHubIdentityVerifier,
-    ArtifactStoreError,
-    ContentAddressedArtifactStore,
-    SQLiteArtifactIndex,
-)
+from __future__ import annotations
 
-from .isolated_worker import (
-    IsolatedWorkerRunner,
-    ResourceLimits,
-    WorkerCancelledError,
-    WorkerCrashedError,
-    WorkerError,
-    WorkerHandlerError,
-    WorkerOutputLimitError,
-    WorkerTimeoutError,
-)
-from .remote_audit import (
-    AuditClientError, AuditOutcomeIndeterminate, AuditRequestRejected,
-    AuditServiceUnavailable, RemoteAuditHttpClient,
-)
-from .remote_audit_service import (
-    AuditServiceError, InMemoryAuditRepository, RemoteAuditService,
-)
-from .execution import (
-    DuplicateExecutionError, ExecutionRecord, ExecutionState, InMemoryExecutionLedger,
-    SQLiteExecutionStore, ExecutionControl, ExecutionCancelledError, ExecutionDeadlineExceeded,
-)
+from importlib import import_module
 
-__all__ = [
-    "Agent",
-    "ChatModel",
-    "ModelMessage",
-    "TaskRequest",
-    "GitHubActionsJWKSProvider",
-    "GitHubActionsOIDCTokenProvider",
-    "GitHubActionsOIDCVerifier",
-    "GitHubActionsOIDCIdentityProvider",
-    "GitHubOIDCPolicy",
-    "OIDCVerificationError",
-    "ContentAddressedArtifactStore",
-    "SQLiteArtifactIndex",
-    "ArtifactStoreError",
-    "ArtifactNotFoundError",
-    "GitHubActorClaim",
-    "VerifiedGitHubActor",
-    "GitHubIdentityVerifier",
-    "ArtifactIntegrityError",
-    "ArtifactGCDryRun",
-    "ArtifactRetentionPolicy",
-    "ArtifactDeletionPlan",
-    "ArtifactObjectInfo",
-    "CrewAIAdapter",
-    "LangChainAdapter",
-    "FrameworkExecutionError",
-    "DuplicateExecutionError",
-    "ExecutionRecord",
-    "ExecutionState",
-    "InMemoryExecutionLedger",
-    "SQLiteExecutionStore",
-    "ExecutionControl",
-    "ExecutionCancelledError",
-    "ExecutionDeadlineExceeded",
-    "IsolatedWorkerRunner",
-    "ResourceLimits",
-    "WorkerError",
-    "WorkerTimeoutError",
-    "WorkerCancelledError",
-    "WorkerCrashedError",
-    "WorkerHandlerError",
-    "WorkerOutputLimitError",
-    "AuditClientError",
-    "AuditOutcomeIndeterminate",
-    "AuditRequestRejected",
-    "AuditServiceUnavailable",
-    "RemoteAuditHttpClient",
-    "AuditServiceError",
-    "InMemoryAuditRepository",
-    "RemoteAuditService",
-]
+_EXPORTS: dict[str, tuple[str, str]] = {
+    "Agent": (".agent", "Agent"),
+    "ChatModel": (".agent", "ChatModel"),
+    "ModelMessage": (".agent", "ModelMessage"),
+    "TaskRequest": (".tasks", "TaskRequest"),
+    "GitHubActionsJWKSProvider": (".github_oidc", "GitHubActionsJWKSProvider"),
+    "GitHubActionsOIDCTokenProvider": (".github_oidc", "GitHubActionsOIDCTokenProvider"),
+    "GitHubActionsOIDCVerifier": (".github_oidc", "GitHubActionsOIDCVerifier"),
+    "GitHubActionsOIDCIdentityProvider": (".github_oidc", "GitHubActionsOIDCIdentityProvider"),
+    "GitHubOIDCPolicy": (".github_oidc", "GitHubOIDCPolicy"),
+    "OIDCVerificationError": (".github_oidc", "OIDCVerificationError"),
+    "ContentAddressedArtifactStore": (".artifacts", "ContentAddressedArtifactStore"),
+    "SQLiteArtifactIndex": (".artifacts", "SQLiteArtifactIndex"),
+    "ArtifactStoreError": (".artifacts", "ArtifactStoreError"),
+    "ArtifactNotFoundError": (".artifacts", "ArtifactNotFoundError"),
+    "GitHubActorClaim": (".artifacts", "GitHubActorClaim"),
+    "VerifiedGitHubActor": (".artifacts", "VerifiedGitHubActor"),
+    "GitHubIdentityVerifier": (".artifacts", "GitHubIdentityVerifier"),
+    "ArtifactIntegrityError": (".artifacts", "ArtifactIntegrityError"),
+    "ArtifactGCDryRun": (".artifacts", "ArtifactGCDryRun"),
+    "ArtifactRetentionPolicy": (".artifacts", "ArtifactRetentionPolicy"),
+    "ArtifactDeletionPlan": (".artifacts", "ArtifactDeletionPlan"),
+    "ArtifactObjectInfo": (".artifacts", "ArtifactObjectInfo"),
+    "CrewAIAdapter": (".framework_adapters", "CrewAIAdapter"),
+    "LangChainAdapter": (".framework_adapters", "LangChainAdapter"),
+    "FrameworkExecutionError": (".framework_adapters", "FrameworkExecutionError"),
+    "DuplicateExecutionError": (".execution", "DuplicateExecutionError"),
+    "ExecutionRecord": (".execution", "ExecutionRecord"),
+    "ExecutionState": (".execution", "ExecutionState"),
+    "InMemoryExecutionLedger": (".execution", "InMemoryExecutionLedger"),
+    "SQLiteExecutionStore": (".execution", "SQLiteExecutionStore"),
+    "ExecutionControl": (".execution", "ExecutionControl"),
+    "ExecutionCancelledError": (".execution", "ExecutionCancelledError"),
+    "ExecutionDeadlineExceeded": (".execution", "ExecutionDeadlineExceeded"),
+    "IsolatedWorkerRunner": (".isolated_worker", "IsolatedWorkerRunner"),
+    "ResourceLimits": (".isolated_worker", "ResourceLimits"),
+    "WorkerError": (".isolated_worker", "WorkerError"),
+    "WorkerTimeoutError": (".isolated_worker", "WorkerTimeoutError"),
+    "WorkerCancelledError": (".isolated_worker", "WorkerCancelledError"),
+    "WorkerCrashedError": (".isolated_worker", "WorkerCrashedError"),
+    "WorkerHandlerError": (".isolated_worker", "WorkerHandlerError"),
+    "WorkerOutputLimitError": (".isolated_worker", "WorkerOutputLimitError"),
+    "AuditClientError": (".remote_audit", "AuditClientError"),
+    "AuditOutcomeIndeterminate": (".remote_audit", "AuditOutcomeIndeterminate"),
+    "AuditRequestRejected": (".remote_audit", "AuditRequestRejected"),
+    "AuditServiceUnavailable": (".remote_audit", "AuditServiceUnavailable"),
+    "RemoteAuditHttpClient": (".remote_audit", "RemoteAuditHttpClient"),
+    "AuditServiceError": (".remote_audit_service", "AuditServiceError"),
+    "InMemoryAuditRepository": (".remote_audit_service", "InMemoryAuditRepository"),
+    "RemoteAuditService": (".remote_audit_service", "RemoteAuditService"),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> object:
+    """Load an exported symbol only when its owning module is requested."""
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    module = import_module(module_name, __name__)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
