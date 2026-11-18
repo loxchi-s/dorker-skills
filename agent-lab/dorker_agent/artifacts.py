@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from pathlib import Path
 
-from .container_sandbox import ArtifactManifest
+from .domain.artifact_manifest import ArtifactManifest
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
