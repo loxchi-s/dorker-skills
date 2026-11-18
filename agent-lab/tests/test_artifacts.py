@@ -321,8 +321,8 @@ class SQLiteArtifactIndexTests(unittest.TestCase):
         os.utime(path, ns=(1_000_000_000, 1_000_000_000))
         plan = self.index.build_gc_plan(ArtifactRetentionPolicy(min_age_seconds=1), now_unix_ns=10_000_000_000)
         altered = replace(plan.candidates[0], size_bytes=plan.candidates[0].size_bytes + 1)
-        forged = replace(plan, candidates=(altered,), total_bytes=plan.total_bytes + 1)
         with self.assertRaisesRegex(ValueError, "approval token"):
+            forged = replace(plan, candidates=(altered,), total_bytes=plan.total_bytes + 1)
             self.index.record_gc_plan(forged, claim=github_claim(101, "creator"), idempotency_key="gc-forged-plan")
         self.assertEqual(self.index.list_audit_events(), [])
 
