@@ -40,6 +40,52 @@ if loaded:
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_core_public_exports_do_not_load_infrastructure_adapters(self):
+        agent_lab_root = Path(__file__).resolve().parents[1]
+        script = """
+import sys
+from dorker_agent import (
+    ArtifactBlobStore,
+    ArtifactManifest,
+    AuditServiceError,
+    ExecutionControl,
+    ExecutionLedger,
+    GitHubActorClaim,
+    GitHubIdentityVerifier,
+    IdentityVerificationError,
+)
+
+assert all((ArtifactBlobStore, ArtifactManifest, AuditServiceError, ExecutionControl,
+            ExecutionLedger, GitHubActorClaim, GitHubIdentityVerifier,
+            IdentityVerificationError))
+forbidden = (
+    "dorker_agent.adapters",
+    "dorker_agent.artifacts",
+    "dorker_agent.execution",
+    "dorker_agent.remote_audit_service",
+    "dorker_agent.github_oidc",
+    "sqlite3",
+)
+loaded = sorted(
+    name for name in sys.modules
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
+)
+if loaded:
+    raise SystemExit("core exports imported infrastructure: " + ", ".join(loaded))
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(agent_lab_root)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=agent_lab_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_sqlite_artifact_index_depends_on_blob_store_port(self):
         agent_lab_root = Path(__file__).resolve().parents[1]
         script = """
