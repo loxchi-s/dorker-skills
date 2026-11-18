@@ -1,0 +1,547 @@
+"""SQLite metadata and audit persistence adapter for artifact manifests."""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import re
+import sqlite3
+import time
+from contextlib import closing
+from pathlib import Path
+
+from ...domain.artifact_manifest import ArtifactManifest
+from ...domain.artifact_gc import (
+    ArtifactDeletionPlan,
+    ArtifactGCDryRun,
+    ArtifactObjectInfo,
+    ArtifactRetentionPolicy,
+)
+from ...domain.identity import GitHubActorClaim, VerifiedGitHubActor
+from ...ports.identity import GitHubIdentityVerifier
+from ..storage.content_addressed_artifact_store import ContentAddressedArtifactStore
+from ..storage.errors import ArtifactIntegrityError
+
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+class SQLiteArtifactIndex:
+    """Durable metadata index for content-addressed blobs.
+
+    Blob publication precedes the SQLite transaction. A database failure can
+    leave an unindexed blob; it cannot expose a manifest for missing bytes.
+    The index is single-host SQLite metadata, separate from execution storage.
+    """
+
+    def __init__(
+        self, database: str | os.PathLike[str], blob_store: ContentAddressedArtifactStore,
+        *, max_records: int = 100_000, max_audit_records: int = 100_000,
+        busy_timeout_ms: int = 5_000, identity_verifier: GitHubIdentityVerifier | None = None,
+    ) -> None:
+        if isinstance(max_records, bool) or not isinstance(max_records, int) or max_records < 1:
+            raise ValueError("max_records must be a positive integer")
+        if isinstance(max_audit_records, bool) or not isinstance(max_audit_records, int) or max_audit_records < 1:
+            raise ValueError("max_audit_records must be a positive integer")
+        if isinstance(busy_timeout_ms, bool) or not isinstance(busy_timeout_ms, int) or busy_timeout_ms < 0:
+            raise ValueError("busy_timeout_ms must be a non-negative integer")
+        self._database = os.fspath(database)
+        if not isinstance(self._database, str) or self._database == ":memory:":
+            raise ValueError("a durable SQLite file path is required")
+        self._blob_store = blob_store
+        self._max_records = max_records
+        self._max_audit_records = max_audit_records
+        self._identity_verifier = identity_verifier
+        self._busy_timeout_ms = busy_timeout_ms
+        self._lock = threading.RLock()
+        Path(self._database).parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(
+            self._database, timeout=self._busy_timeout_ms / 1000,
+            isolation_level=None,
+        )
+        db.row_factory = sqlite3.Row
+        db.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms}")
+        return db
+
+    def _initialize(self) -> None:
+        with self._lock, closing(self._connect()) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS artifact_manifests (
+                    artifact_id TEXT PRIMARY KEY,
+                    sha256 TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+                    source TEXT NOT NULL,
+                    execution_id TEXT,
+                    created_at_unix_ms INTEGER,
+                    manifest_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_artifacts_execution "
+                "ON artifact_manifests(execution_id, created_at, artifact_id)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_artifacts_sha256 "
+                "ON artifact_manifests(sha256)"
+            )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS artifact_audit_log (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_unix_ms INTEGER NOT NULL,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    approval_token TEXT,
+                    details_json TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT,
+                    request_hash TEXT
+                )
+            """)
+            columns = {row["name"] for row in db.execute(
+                "PRAGMA table_info(artifact_audit_log)"
+            ).fetchall()}
+            if "idempotency_key" not in columns:
+                db.execute("ALTER TABLE artifact_audit_log ADD COLUMN idempotency_key TEXT")
+            if "request_hash" not in columns:
+                db.execute("ALTER TABLE artifact_audit_log ADD COLUMN request_hash TEXT")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_idempotency_key "
+                "ON artifact_audit_log(idempotency_key) WHERE idempotency_key IS NOT NULL"
+            )
+
+    @staticmethod
+    def _manifest_id(manifest: ArtifactManifest) -> str:
+        return hashlib.sha256(manifest.to_json().encode("utf-8")).hexdigest()
+
+    def put(
+        self, data: bytes, *, name: str, media_type: str, source: str,
+        execution_id: str | None = None, created_at_unix_ms: int | None = None,
+    ) -> str:
+        manifest = self._blob_store.put(
+            data, name=name, media_type=media_type, source=source,
+            execution_id=execution_id, created_at_unix_ms=created_at_unix_ms,
+        )
+        return self.register(manifest)
+
+    def register(self, manifest: ArtifactManifest) -> str:
+        if not isinstance(manifest, ArtifactManifest):
+            raise TypeError("manifest must be an ArtifactManifest")
+        blob = self._blob_store.get(manifest.sha256)
+        if not manifest.verify(blob, max_bytes=self._blob_store.max_artifact_bytes):
+            raise ArtifactIntegrityError("manifest does not match published artifact bytes")
+        artifact_id = self._manifest_id(manifest)
+        manifest_json = manifest.to_json()
+        with self._lock, closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT manifest_json FROM artifact_manifests WHERE artifact_id=?",
+                (artifact_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["manifest_json"] != manifest_json:
+                    db.rollback()
+                    raise ArtifactIntegrityError("artifact manifest ID collision")
+                db.commit()
+                return artifact_id
+            count = db.execute("SELECT COUNT(*) FROM artifact_manifests").fetchone()[0]
+            if count >= self._max_records:
+                db.rollback()
+                raise RuntimeError("artifact index capacity reached")
+            db.execute(
+                "INSERT INTO artifact_manifests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    artifact_id, manifest.sha256.lower(), manifest.name,
+                    manifest.media_type, manifest.size_bytes, manifest.source,
+                    manifest.execution_id, manifest.created_at_unix_ms,
+                    manifest_json, time.time(),
+                ),
+            )
+            db.commit()
+        return artifact_id
+
+    def get_manifest(self, artifact_id: str) -> ArtifactManifest | None:
+        self._validate_artifact_id(artifact_id)
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT manifest_json FROM artifact_manifests WHERE artifact_id=?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["manifest_json"])
+        return ArtifactManifest(**payload)
+
+    def get(self, artifact_id: str) -> tuple[ArtifactManifest, bytes] | None:
+        manifest = self.get_manifest(artifact_id)
+        if manifest is None:
+            return None
+        data = self._blob_store.get(manifest.sha256)
+        if not manifest.verify(data, max_bytes=self._blob_store.max_artifact_bytes):
+            raise ArtifactIntegrityError("artifact bytes do not match indexed manifest")
+        return manifest, data
+
+    def list_for_execution(self, execution_id: str, *, limit: int = 100) -> list[tuple[str, ArtifactManifest]]:
+        if not isinstance(execution_id, str) or not execution_id.strip() or len(execution_id) > 128:
+            raise ValueError("execution_id must be 1..128 non-whitespace characters")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer from 1 to 1000")
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT artifact_id, manifest_json FROM artifact_manifests "
+                "WHERE execution_id=? ORDER BY created_at, artifact_id LIMIT ?",
+                (execution_id, limit),
+            ).fetchall()
+        return [
+            (row["artifact_id"], ArtifactManifest(**json.loads(row["manifest_json"])))
+            for row in rows
+        ]
+
+    def dry_run_gc(self, *, max_scan_objects: int = 10_000) -> ArtifactGCDryRun:
+        """Report unreferenced blobs; this method never deletes or mutates data."""
+        objects, corrupt, truncated = self._blob_store.scan_objects(max_objects=max_scan_objects)
+        with closing(self._connect()) as db:
+            referenced = {
+                row[0] for row in db.execute(
+                    "SELECT DISTINCT sha256 FROM artifact_manifests"
+                ).fetchall()
+            }
+        object_digests = {item.sha256 for item in objects}
+        corrupt_set = set(corrupt)
+        missing = tuple(sorted(referenced - object_digests - corrupt_set))
+        orphaned = tuple(item for item in objects if item.sha256 not in referenced)
+        return ArtifactGCDryRun(
+            scanned_objects=len(objects) + len(corrupt),
+            referenced_objects=len(referenced),
+            orphaned=orphaned,
+            missing_digests=missing,
+            corrupt_digests=tuple(sorted(corrupt)),
+            truncated=truncated,
+        )
+
+    def build_gc_plan(
+        self, policy: ArtifactRetentionPolicy, *, now_unix_ns: int | None = None,
+    ) -> ArtifactDeletionPlan:
+        """Build a non-destructive, approval-gated candidate plan; never deletes."""
+        if not isinstance(policy, ArtifactRetentionPolicy):
+            raise TypeError("policy must be an ArtifactRetentionPolicy")
+        if now_unix_ns is None:
+            now_unix_ns = time.time_ns()
+        if isinstance(now_unix_ns, bool) or not isinstance(now_unix_ns, int) or now_unix_ns < 0:
+            raise ValueError("now_unix_ns must be a non-negative integer")
+        report = self.dry_run_gc(max_scan_objects=policy.max_scan_objects)
+        if report.truncated:
+            raise RuntimeError("cannot build deletion plan from a truncated scan")
+        cutoff = now_unix_ns - policy.min_age_seconds * 1_000_000_000
+        eligible = sorted(
+            (item for item in report.orphaned if item.mtime_unix_ns <= cutoff),
+            key=lambda item: (item.mtime_unix_ns, item.sha256),
+        )[:policy.max_candidates]
+        candidates = tuple(eligible)
+        token = self._gc_plan_token(cutoff, candidates)
+        return ArtifactDeletionPlan(
+            candidates=candidates,
+            total_bytes=sum(item.size_bytes for item in candidates),
+            cutoff_unix_ns=cutoff,
+            approval_token=token,
+        )
+
+    @staticmethod
+    def _audit_hash(payload: dict[str, object]) -> str:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _verified_actor(self, claim: GitHubActorClaim) -> VerifiedGitHubActor:
+        if self._identity_verifier is None:
+            raise RuntimeError("GitHub identity verification is not configured")
+        if not isinstance(claim, GitHubActorClaim):
+            raise TypeError("claim must be a GitHubActorClaim")
+        if isinstance(claim.github_id, bool) or not isinstance(claim.github_id, int) or claim.github_id < 1:
+            raise ValueError("github_id must be a positive integer")
+        if not isinstance(claim.login, str) or not claim.login.strip() or len(claim.login) > 39:
+            raise ValueError("login must be 1..39 non-whitespace characters")
+        if not isinstance(claim.oidc_token, str) or not claim.oidc_token or len(claim.oidc_token) > 16_384:
+            raise ValueError("OIDC token must be 1..16384 characters")
+        actor = self._identity_verifier.verify(claim)
+        if not isinstance(actor, VerifiedGitHubActor):
+            raise TypeError("identity verifier must return VerifiedGitHubActor")
+        if isinstance(actor.github_id, bool) or not isinstance(actor.github_id, int) or actor.github_id < 1:
+            raise ValueError("verified GitHub ID must be a positive integer")
+        if not isinstance(actor.login, str) or not actor.login.strip() or len(actor.login) > 39:
+            raise ValueError("verified GitHub login is invalid")
+        return actor
+
+    @staticmethod
+    def _gc_plan_token(cutoff_unix_ns: int, candidates: tuple[ArtifactObjectInfo, ...]) -> str:
+        payload = json.dumps({
+            "cutoff_unix_ns": cutoff_unix_ns,
+            "candidates": [
+                {"sha256": item.sha256, "size_bytes": item.size_bytes,
+                 "mtime_unix_ns": item.mtime_unix_ns} for item in candidates
+            ],
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    @classmethod
+    def _validate_gc_plan(cls, plan: ArtifactDeletionPlan) -> None:
+        if not isinstance(plan.candidates, tuple):
+            raise ValueError("GC plan candidates must be an immutable tuple")
+        if isinstance(plan.cutoff_unix_ns, bool) or not isinstance(plan.cutoff_unix_ns, int):
+            raise ValueError("GC plan cutoff must be an integer")
+        if isinstance(plan.total_bytes, bool) or not isinstance(plan.total_bytes, int) or plan.total_bytes < 0:
+            raise ValueError("GC plan total_bytes must be a non-negative integer")
+        seen: set[str] = set()
+        previous: tuple[int, str] | None = None
+        total = 0
+        for item in plan.candidates:
+            if not isinstance(item, ArtifactObjectInfo) or not _DIGEST.fullmatch(item.sha256):
+                raise ValueError("GC plan contains an invalid candidate")
+            for name in ("size_bytes", "mtime_unix_ns"):
+                value = getattr(item, name)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError(f"GC candidate {name} must be a non-negative integer")
+            if item.mtime_unix_ns > plan.cutoff_unix_ns or item.sha256 in seen:
+                raise ValueError("GC plan contains an ineligible or duplicate candidate")
+            key = (item.mtime_unix_ns, item.sha256)
+            if previous is not None and key < previous:
+                raise ValueError("GC plan candidates are not canonically ordered")
+            seen.add(item.sha256)
+            previous = key
+            total += item.size_bytes
+        if total != plan.total_bytes:
+            raise ValueError("GC plan total_bytes does not match its candidates")
+        if (not isinstance(plan.approval_token, str) or not _DIGEST.fullmatch(plan.approval_token)
+                or not hmac.compare_digest(cls._gc_plan_token(plan.cutoff_unix_ns, plan.candidates), plan.approval_token)):
+            raise ValueError("GC plan approval token does not match its candidate metadata")
+
+    @classmethod
+    def _validate_recorded_gc_plan(cls, token: str, raw: str) -> int:
+        try:
+            data = json.loads(raw)
+            cutoff, candidates_data = data["cutoff_unix_ns"], data["candidates"]
+            creator, total, count = data["github_actor_id"], data["total_bytes"], data["candidate_count"]
+            if (isinstance(cutoff, bool) or not isinstance(cutoff, int)
+                    or isinstance(creator, bool) or not isinstance(creator, int) or creator < 1
+                    or isinstance(total, bool) or not isinstance(total, int)
+                    or isinstance(count, bool) or not isinstance(count, int)
+                    or not isinstance(candidates_data, list)):
+                raise ValueError
+            candidates = []
+            for entry in candidates_data:
+                if not isinstance(entry, dict) or set(entry) != {"sha256", "size_bytes", "mtime_unix_ns"}:
+                    raise ValueError
+                candidates.append(ArtifactObjectInfo(**entry))
+            plan = ArtifactDeletionPlan(tuple(candidates), total, cutoff, token)
+            cls._validate_gc_plan(plan)
+            if count != len(candidates):
+                raise ValueError
+            return creator
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("recorded GC plan metadata or approval token is invalid") from exc
+
+    def record_gc_plan(
+        self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim,
+        idempotency_key: str,
+    ) -> str:
+        if not isinstance(plan, ArtifactDeletionPlan):
+            raise TypeError("plan must be an ArtifactDeletionPlan")
+        self._validate_gc_plan(plan)
+        actor = self._verified_actor(claim)
+        details = {
+            "candidate_count": len(plan.candidates),
+            "total_bytes": plan.total_bytes,
+            "cutoff_unix_ns": plan.cutoff_unix_ns,
+            "candidates": [
+                {"sha256": item.sha256, "size_bytes": item.size_bytes,
+                 "mtime_unix_ns": item.mtime_unix_ns}
+                for item in plan.candidates
+            ],
+            "github_actor_id": actor.github_id,
+            "github_login": actor.login,
+        }
+        return self._append_audit_event(
+            actor=f"github:{actor.github_id}:{actor.login}",
+            action="gc_plan_created",
+            approval_token=plan.approval_token, details=details,
+            idempotency_key=idempotency_key,
+        )
+
+    def record_gc_approval(
+        self, approval_token: str, *, claim: GitHubActorClaim, approved: bool,
+        idempotency_key: str,
+    ) -> str:
+        if not isinstance(approval_token, str) or not _DIGEST.fullmatch(approval_token):
+            raise ValueError("approval_token must be a lowercase 64-character hex digest")
+        if not isinstance(approved, bool):
+            raise TypeError("approved must be bool")
+        actor = self._verified_actor(claim)
+        return self._append_audit_event(
+            actor=f"github:{actor.github_id}:{actor.login}",
+            action="gc_plan_approved" if approved else "gc_plan_rejected",
+            approval_token=approval_token,
+            details={"approved": approved, "github_actor_id": actor.github_id,
+                     "github_login": actor.login},
+            require_distinct_approver=True, idempotency_key=idempotency_key,
+        )
+
+    def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer from 1 to 1000")
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
+                "details_json, previous_hash, event_hash, idempotency_key, request_hash "
+                "FROM artifact_audit_log ORDER BY sequence DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return [
+            {
+                "sequence": row["sequence"],
+                "timestamp_unix_ms": row["timestamp_unix_ms"],
+                "actor": row["actor"],
+                "action": row["action"],
+                "approval_token": row["approval_token"],
+                "details": json.loads(row["details_json"]),
+                "previous_hash": row["previous_hash"],
+                "event_hash": row["event_hash"],
+                "idempotency_key": row["idempotency_key"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def verify_audit_log(self) -> bool:
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
+                "details_json, previous_hash, event_hash, idempotency_key, request_hash "
+                "FROM artifact_audit_log ORDER BY sequence"
+            ).fetchall()
+        previous = "0" * 64
+        for row in rows:
+            payload = {
+                "sequence": row["sequence"],
+                "timestamp_unix_ms": row["timestamp_unix_ms"],
+                "actor": row["actor"],
+                "action": row["action"],
+                "approval_token": row["approval_token"],
+                "details_json": row["details_json"],
+                "previous_hash": row["previous_hash"],
+            }
+            if row["previous_hash"] != previous:
+                return False
+            if row["idempotency_key"] is not None:
+                payload["idempotency_key"] = row["idempotency_key"]
+                payload["request_hash"] = row["request_hash"]
+            expected = self._audit_hash(payload)
+            if not hmac.compare_digest(expected, row["event_hash"]):
+                return False
+            previous = row["event_hash"]
+        return True
+
+    def _append_audit_event(
+        self, *, actor: str, action: str, approval_token: str | None,
+        details: dict[str, object], idempotency_key: str,
+        require_distinct_approver: bool = False,
+    ) -> str:
+        if (not isinstance(idempotency_key, str)
+                or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", idempotency_key)):
+            raise ValueError("idempotency_key must be 1..128 safe ASCII characters")
+        details_json = json.dumps(details, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        request_hash = self._audit_hash({
+            "actor": actor, "action": action, "approval_token": approval_token,
+            "details_json": details_json,
+        })
+        if len(details_json.encode("utf-8")) > 64 * 1024:
+            raise ValueError("audit event details exceed 64 KiB")
+        with self._lock, closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            prior_request = db.execute(
+                "SELECT request_hash, event_hash FROM artifact_audit_log "
+                "WHERE idempotency_key=?", (idempotency_key,),
+            ).fetchone()
+            if prior_request is not None:
+                if prior_request["request_hash"] is None or not hmac.compare_digest(
+                    prior_request["request_hash"], request_hash,
+                ):
+                    db.rollback()
+                    raise ValueError("idempotency key was already used for a different request")
+                event_hash = prior_request["event_hash"]
+                db.commit()
+                return event_hash
+            if action == "gc_plan_created":
+                duplicate_plan = db.execute(
+                    "SELECT 1 FROM artifact_audit_log "
+                    "WHERE action='gc_plan_created' AND approval_token=? LIMIT 1",
+                    (approval_token,),
+                ).fetchone()
+                if duplicate_plan is not None:
+                    db.rollback()
+                    raise ValueError("GC plan token has already been recorded")
+            if action in ("gc_plan_approved", "gc_plan_rejected"):
+                prior_decision = db.execute(
+                    "SELECT 1 FROM artifact_audit_log WHERE "
+                    "action IN ('gc_plan_approved', 'gc_plan_rejected') "
+                    "AND approval_token=? LIMIT 1",
+                    (approval_token,),
+                ).fetchone()
+                if prior_decision is not None:
+                    db.rollback()
+                    raise ValueError("GC plan already has a recorded decision")
+            if require_distinct_approver:
+                plan_row = db.execute(
+                    "SELECT details_json FROM artifact_audit_log "
+                    "WHERE action='gc_plan_created' AND approval_token=? "
+                    "ORDER BY sequence DESC LIMIT 1",
+                    (approval_token,),
+                ).fetchone()
+                if plan_row is None:
+                    db.rollback()
+                    raise ValueError("approval token has no recorded GC plan")
+                creator_id = self._validate_recorded_gc_plan(approval_token, plan_row["details_json"])
+                approver_id = details.get("github_actor_id")
+                if creator_id == approver_id:
+                    db.rollback()
+                    raise ValueError("GC plan approval requires a different GitHub actor")
+            count = db.execute("SELECT COUNT(*) FROM artifact_audit_log").fetchone()[0]
+            if count >= self._max_audit_records:
+                db.rollback()
+                raise RuntimeError("artifact audit log capacity reached")
+            row = db.execute(
+                "SELECT sequence, event_hash FROM artifact_audit_log ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            previous_hash = row["event_hash"] if row else "0" * 64
+            sequence = (row["sequence"] + 1) if row else 1
+            timestamp = time.time_ns() // 1_000_000
+            payload = {
+                "sequence": sequence,
+                "timestamp_unix_ms": timestamp,
+                "actor": actor,
+                "action": action,
+                "approval_token": approval_token,
+                "details_json": details_json,
+                "previous_hash": previous_hash,
+                "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
+            }
+            event_hash = self._audit_hash(payload)
+            db.execute(
+                "INSERT INTO artifact_audit_log "
+                "(sequence, timestamp_unix_ms, actor, action, approval_token, details_json, "
+                "previous_hash, event_hash, idempotency_key, request_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (sequence, timestamp, actor, action, approval_token, details_json,
+                 previous_hash, event_hash, idempotency_key, request_hash),
+            )
+            db.commit()
+        return event_hash
+
+    @staticmethod
+    def _validate_artifact_id(artifact_id: str) -> str:
+        if not isinstance(artifact_id, str) or not _DIGEST.fullmatch(artifact_id):
+            raise ValueError("artifact_id must be a lowercase 64-character hex digest")
+        return artifact_id
