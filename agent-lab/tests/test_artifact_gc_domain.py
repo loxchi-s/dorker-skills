@@ -37,6 +37,47 @@ class ArtifactGCDomainContractTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             item.size_bytes = 13
 
+    def test_execution_domain_and_adapters_respect_layer_boundaries(self):
+        agent_lab = Path(__file__).resolve().parents[1]
+        domain_script = """
+import sys
+import dorker_agent.domain.execution
+import dorker_agent.ports.execution_ledger
+assert "sqlite3" not in sys.modules
+assert "dorker_agent.execution" not in sys.modules
+"""
+        domain_result = subprocess.run(
+            [sys.executable, "-c", domain_script],
+            cwd=agent_lab,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            domain_result.returncode,
+            0,
+            msg=f"execution domain isolation failed: {domain_result.stdout}\\n{domain_result.stderr}",
+        )
+
+        adapter_script = """
+import sys
+from dorker_agent.adapters.persistence.sqlite_execution_store import SQLiteExecutionStore
+assert SQLiteExecutionStore is not None
+assert "dorker_agent.execution" not in sys.modules
+"""
+        adapter_result = subprocess.run(
+            [sys.executable, "-c", adapter_script],
+            cwd=agent_lab,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            adapter_result.returncode,
+            0,
+            msg=f"execution adapter isolation failed: {adapter_result.stdout}\\n{adapter_result.stderr}",
+        )
+
     def test_storage_adapters_do_not_import_compatibility_facade(self):
         agent_lab = Path(__file__).resolve().parents[1]
         script = """
