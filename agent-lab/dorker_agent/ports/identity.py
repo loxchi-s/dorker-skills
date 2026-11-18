@@ -10,3 +10,7 @@ class GitHubIdentityVerifier(Protocol):
     """Verify an untrusted GitHub actor claim and return its canonical identity."""
 
     def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor: ...
+
+
+class IdentityVerificationError(ValueError):
+    """Port-level failure raised when an identity claim cannot be verified."""
