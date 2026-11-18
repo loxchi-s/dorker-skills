@@ -806,5 +806,48 @@ class SignedOIDCServiceTests(unittest.TestCase):
         self.assertEqual(self.repository.list_events(1450173940, 0, 10), [])
 
 
+
+
+class RequestRateLimiterTests(unittest.TestCase):
+    def test_token_bucket_refills_using_injected_clock(self):
+        from dorker_agent.adapters.http.request_rate_limiter import RequestRateLimiter
+
+        now = [100.0]
+        limiter = RequestRateLimiter(
+            global_rate_per_minute=60, global_burst=1,
+            per_client_rate_per_minute=60, per_client_burst=1,
+            clock=lambda: now[0],
+        )
+        self.assertEqual(limiter.allow("client-a"), (True, 0))
+        self.assertEqual(limiter.allow("client-a"), (False, 1))
+        now[0] += 1.0
+        self.assertEqual(limiter.allow("client-a"), (True, 0))
+
+    def test_client_state_is_bounded_and_evicted_lru(self):
+        from dorker_agent.adapters.http.request_rate_limiter import RequestRateLimiter
+
+        now = [0.0]
+        limiter = RequestRateLimiter(
+            global_rate_per_minute=600, global_burst=10,
+            per_client_rate_per_minute=600, per_client_burst=1,
+            max_clients=2, clock=lambda: now[0],
+        )
+        self.assertEqual(limiter.allow("a"), (True, 0))
+        self.assertEqual(limiter.allow("b"), (True, 0))
+        self.assertEqual(limiter.allow("a"), (False, 1))
+        self.assertEqual(limiter.allow("c"), (True, 0))
+        self.assertEqual(len(limiter._clients), 2)
+        self.assertEqual(limiter.allow("b"), (True, 0))
+        self.assertEqual(len(limiter._clients), 2)
+
+    def test_rejects_invalid_configuration(self):
+        from dorker_agent.adapters.http.request_rate_limiter import RequestRateLimiter
+
+        with self.assertRaises(ValueError):
+            RequestRateLimiter(global_rate_per_minute=0)
+        with self.assertRaises(ValueError):
+            RequestRateLimiter(max_clients=0)
+
+
 if __name__ == "__main__":
     unittest.main()
