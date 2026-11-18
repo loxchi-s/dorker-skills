@@ -72,6 +72,14 @@ jobs:
             echo "WORKBENCH_DIR=$workbench_dir/workbench" >> "$GITHUB_ENV"
           fi
 
+      - name: Configure Agent Lab import path
+        shell: bash
+        run: |
+          set -euo pipefail
+          agent_lab_dir="$(cd "$(dirname "$WORKBENCH_DIR")/agent-lab" && pwd)"
+          test -f "$agent_lab_dir/dorker_agent/agent.py"
+          echo "DORKER_AGENT_LAB_DIR=$agent_lab_dir" >> "$GITHUB_ENV"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -79,6 +87,8 @@ jobs:
 
       - name: Unit test local inference client
         working-directory: ${{ env.WORKBENCH_DIR }}
+        env:
+          PYTHONPATH: ${{ env.DORKER_AGENT_LAB_DIR }}
         run: python -m unittest -v
 
       - name: Start resource-limited local Ollama
@@ -104,6 +114,7 @@ jobs:
           OLLAMA_URL: http://127.0.0.1:11434
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GITHUB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONPATH: ${{ env.DORKER_AGENT_LAB_DIR }}
         run: python "$WORKBENCH_DIR/local_ai.py"
 
       - name: Upload review report
