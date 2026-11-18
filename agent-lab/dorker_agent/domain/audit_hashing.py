@@ -4,8 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-from .audit import AuditServiceError
-
 ZERO_HASH = "0" * 64
 
 
@@ -19,7 +17,7 @@ def canonical_hash(value: dict[str, object]) -> str:
             allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise AuditServiceError(400, "invalid_request", "request is not canonical JSON") from exc
+        raise ValueError("request is not canonical JSON") from exc
     return hashlib.sha256(encoded).hexdigest()
 
 
