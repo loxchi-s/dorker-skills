@@ -395,11 +395,16 @@ class SQLiteArtifactIndex:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
             raise ValueError("limit must be an integer from 1 to 1000")
         with closing(self._connect()) as db:
+            db.execute("BEGIN")
+            if not self._verify_audit_log_connection(db):
+                db.rollback()
+                raise ArtifactIntegrityError("artifact audit chain verification failed")
             rows = db.execute(
                 "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
                 "details_json, previous_hash, event_hash, idempotency_key, request_hash "
                 "FROM artifact_audit_log ORDER BY sequence DESC LIMIT ?", (limit,),
             ).fetchall()
+            db.commit()
         return [
             {
                 "sequence": row["sequence"],
@@ -415,15 +420,20 @@ class SQLiteArtifactIndex:
             for row in reversed(rows)
         ]
 
-    def verify_audit_log(self) -> bool:
-        with closing(self._connect()) as db:
-            rows = db.execute(
-                "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
-                "details_json, previous_hash, event_hash, idempotency_key, request_hash "
-                "FROM artifact_audit_log ORDER BY sequence"
-            ).fetchall()
+    @classmethod
+    def _verify_audit_log_connection(cls, db: sqlite3.Connection) -> bool:
+        rows = db.execute(
+            "SELECT sequence, timestamp_unix_ms, actor, action, approval_token, "
+            "details_json, previous_hash, event_hash, idempotency_key, request_hash "
+            "FROM artifact_audit_log ORDER BY sequence"
+        ).fetchall()
         previous = "0" * 64
-        for row in rows:
+        for expected_sequence, row in enumerate(rows, start=1):
+            if row["sequence"] != expected_sequence or row["previous_hash"] != previous:
+                return False
+            key, request_hash = row["idempotency_key"], row["request_hash"]
+            if (key is None) != (request_hash is None):
+                return False
             payload = {
                 "sequence": row["sequence"],
                 "timestamp_unix_ms": row["timestamp_unix_ms"],
@@ -433,16 +443,20 @@ class SQLiteArtifactIndex:
                 "details_json": row["details_json"],
                 "previous_hash": row["previous_hash"],
             }
-            if row["previous_hash"] != previous:
+            if key is not None:
+                payload["idempotency_key"] = key
+                payload["request_hash"] = request_hash
+            event_hash = row["event_hash"]
+            if not isinstance(event_hash, str) or not hmac.compare_digest(
+                cls._audit_hash(payload), event_hash,
+            ):
                 return False
-            if row["idempotency_key"] is not None:
-                payload["idempotency_key"] = row["idempotency_key"]
-                payload["request_hash"] = row["request_hash"]
-            expected = self._audit_hash(payload)
-            if not hmac.compare_digest(expected, row["event_hash"]):
-                return False
-            previous = row["event_hash"]
+            previous = event_hash
         return True
+
+    def verify_audit_log(self) -> bool:
+        with closing(self._connect()) as db:
+            return self._verify_audit_log_connection(db)
 
     def _append_audit_event(
         self, *, actor: str, action: str, approval_token: str | None,
@@ -461,6 +475,9 @@ class SQLiteArtifactIndex:
             raise ValueError("audit event details exceed 64 KiB")
         with self._lock, closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            if not self._verify_audit_log_connection(db):
+                db.rollback()
+                raise ArtifactIntegrityError("artifact audit chain verification failed")
             prior_request = db.execute(
                 "SELECT request_hash, event_hash FROM artifact_audit_log "
                 "WHERE idempotency_key=?", (idempotency_key,),
