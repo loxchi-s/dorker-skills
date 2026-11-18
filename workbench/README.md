@@ -159,8 +159,8 @@ settings. For private repositories, confirm GitHub's reusable-workflow access po
 - The previous Local AI Workbench run was superseded because the 46-file, approximately
   263 KB PR diff exceeded the former 16-file/24-chunk/96 KB review bounds. It is not counted
   as a complete review.
-- Expanded review bounds are implemented: 64 files, 64 chunks, 300 KB total diff context,
-  and a 60-minute inference budget. The workflow timeout is 110 minutes. A fresh full-coverage
+- Expanded review bounds are implemented: 64 files, 128 chunks, 360 KB total diff context,
+  and a 100-minute inference budget. The workflow timeout is 110 minutes. A fresh full-coverage
   GitHub Actions run is still required; no Local AI PASS is claimed yet.
 - CodeRabbit manual review was requested with @coderabbitai review; no review findings have
   been returned yet.
