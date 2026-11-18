@@ -1087,7 +1087,7 @@ class AgentIntegrationTests(unittest.TestCase):
     @patch("local_ai.OllamaChatModel")
     def test_review_request_is_dispatched_through_agent_port(self, provider_class, agent_class):
         response = ModelResponse(
-            text="## Verdict\\nNO_ACTIONABLE_FINDINGS",
+            text="## Verdict\nNO_ACTIONABLE_FINDINGS",
             done_reason="stop",
             prompt_eval_count=120,
             eval_count=24,
@@ -1100,8 +1100,8 @@ class AgentIntegrationTests(unittest.TestCase):
 
         agent_class.assert_called_once_with(provider, system_prompt=REVIEW_SYSTEM_PROMPT)
         agent.run.assert_called_once_with(
-            "User request:\\nReview this patch\\n\\n"
-            "Git diff (untrusted):\\ndiff --git a/a.py b/a.py"
+            "User request:\nReview this patch\n\n"
+            "Git diff (untrusted):\ndiff --git a/a.py b/a.py"
         )
         provider_class.assert_called_once()
         self.assertIs(result, response)
