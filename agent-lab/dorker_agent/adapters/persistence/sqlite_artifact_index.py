@@ -21,8 +21,7 @@ from ...domain.artifact_gc import (
 )
 from ...domain.identity import GitHubActorClaim, VerifiedGitHubActor
 from ...ports.identity import GitHubIdentityVerifier
-from ..storage.content_addressed_artifact_store import ContentAddressedArtifactStore
-from ..storage.errors import ArtifactIntegrityError
+from ...ports.artifact_blob_store import ArtifactBlobStore, ArtifactIntegrityError
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -36,7 +35,7 @@ class SQLiteArtifactIndex:
     """
 
     def __init__(
-        self, database: str | os.PathLike[str], blob_store: ContentAddressedArtifactStore,
+        self, database: str | os.PathLike[str], blob_store: ArtifactBlobStore,
         *, max_records: int = 100_000, max_audit_records: int = 100_000,
         busy_timeout_ms: int = 5_000, identity_verifier: GitHubIdentityVerifier | None = None,
     ) -> None:
