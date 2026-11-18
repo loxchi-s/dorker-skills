@@ -30,8 +30,8 @@ from .ports.audit import (
     ApprovalEvidenceVerifier,
     AuditRepository,
     AuthorizationPolicy,
-    IdentityVerifier,
 )
+from .ports.identity import GitHubIdentityVerifier as IdentityVerifier
 from .github_oidc import OIDCVerificationError
 
 _MAX_BODY_BYTES = 64 * 1024
