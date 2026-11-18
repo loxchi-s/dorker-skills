@@ -10,14 +10,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
-from .artifacts import VerifiedGitHubActor
-from .remote_audit_service import (
-    AuditServiceError,
-    AuthorizationResult,
-    VerifiedApprovalEvidence,
-    _ZERO_HASH,
-    _event_hash,
-)
+from .domain.identity import VerifiedGitHubActor
+from .domain.audit import AuditServiceError, AuthorizationResult, VerifiedApprovalEvidence
+from .domain.audit_hashing import ZERO_HASH as _ZERO_HASH, event_hash as _event_hash
 
 _MAX_EVENTS = 10_000
 
