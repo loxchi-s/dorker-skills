@@ -4,11 +4,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
+import threading
 
 from ...domain.artifact_manifest import ArtifactManifest
 from ...domain.artifact_gc import (
