@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .domain.identity import VerifiedGitHubActor
-from .domain.audit import AuditServiceError, AuthorizationResult, VerifiedApprovalEvidence
+from .application.errors import AuditServiceError
+from .domain.audit import AuthorizationResult, VerifiedApprovalEvidence
 from .domain.audit_hashing import ZERO_HASH as _ZERO_HASH, event_hash as _event_hash
 
 _MAX_EVENTS = 10_000
