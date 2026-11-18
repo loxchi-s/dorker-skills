@@ -12,11 +12,16 @@ import threading
 import time
 import uuid
 from contextlib import closing
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
 from pathlib import Path
 
 from .domain.artifact_manifest import ArtifactManifest
+from .domain.artifact_gc import (
+    ArtifactDeletionPlan,
+    ArtifactGCDryRun,
+    ArtifactObjectInfo,
+    ArtifactRetentionPolicy,
+)
+from .ports.artifact_gc_audit import AuditStore
 from .domain.identity import GitHubActorClaim, VerifiedGitHubActor
 from .ports.identity import GitHubIdentityVerifier
 
@@ -33,69 +38,6 @@ class ArtifactNotFoundError(ArtifactStoreError):
 
 class ArtifactIntegrityError(ArtifactStoreError):
     """Stored bytes do not match their content address."""
-
-
-@runtime_checkable
-class AuditStore(Protocol):
-    """Provider-neutral contract for the current artifact-GC audit operations.
-
-    Implementations must commit each operation atomically and fail closed.
-    Every write requires a caller-supplied idempotency key. Reusing a key with
-    the same canonical request returns the original event hash; changed content
-    under the same key fails closed.
-    """
-
-    def record_gc_plan(
-        self, plan: ArtifactDeletionPlan, *, claim: GitHubActorClaim,
-        idempotency_key: str,
-    ) -> str: ...
-
-    def record_gc_approval(
-        self, approval_token: str, *, claim: GitHubActorClaim, approved: bool,
-        idempotency_key: str,
-    ) -> str: ...
-
-    def list_audit_events(self, *, limit: int = 100) -> list[dict[str, object]]: ...
-
-    def verify_audit_log(self) -> bool: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactObjectInfo:
-    sha256: str
-    size_bytes: int
-    mtime_unix_ns: int
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactRetentionPolicy:
-    min_age_seconds: int = 7 * 24 * 60 * 60
-    max_candidates: int = 100
-    max_scan_objects: int = 10_000
-
-    def __post_init__(self) -> None:
-        for field_name in ("min_age_seconds", "max_candidates", "max_scan_objects"):
-            value = getattr(self, field_name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"{field_name} must be a positive integer")
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactDeletionPlan:
-    candidates: tuple[ArtifactObjectInfo, ...]
-    total_bytes: int
-    cutoff_unix_ns: int
-    approval_token: str
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactGCDryRun:
-    scanned_objects: int
-    referenced_objects: int
-    orphaned: tuple[ArtifactObjectInfo, ...]
-    missing_digests: tuple[str, ...]
-    corrupt_digests: tuple[str, ...]
-    truncated: bool
 
 
 class ContentAddressedArtifactStore:
