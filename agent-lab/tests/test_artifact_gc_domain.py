@@ -37,6 +37,29 @@ class ArtifactGCDomainContractTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             item.size_bytes = 13
 
+    def test_storage_adapters_do_not_import_compatibility_facade(self):
+        agent_lab = Path(__file__).resolve().parents[1]
+        script = """
+import sys
+from dorker_agent.adapters.persistence.sqlite_artifact_index import SQLiteArtifactIndex
+from dorker_agent.adapters.storage.content_addressed_artifact_store import ContentAddressedArtifactStore
+assert SQLiteArtifactIndex is not None
+assert ContentAddressedArtifactStore is not None
+assert "dorker_agent.artifacts" not in sys.modules
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=agent_lab,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"adapter isolation failed: {completed.stdout}\\n{completed.stderr}",
+        )
+
     def test_domain_and_port_imports_do_not_load_storage_adapters(self):
         agent_lab = Path(__file__).resolve().parents[1]
         script = """
