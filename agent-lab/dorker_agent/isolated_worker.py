@@ -14,16 +14,12 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Any, Callable, Mapping
 
-from .execution import (
-    ExecutionCancelledError,
-    ExecutionControl,
-    ExecutionDeadlineExceeded,
-    InMemoryExecutionLedger,
-    SQLiteExecutionStore,
-)
+from .application.errors import ExecutionCancelledError, ExecutionDeadlineExceeded
+from .application.execution_control import ExecutionControl
+from .ports.execution_ledger import ExecutionLedger
 
 WorkerHandler = Callable[["WorkerContext", Mapping[str, Any]], Any]
-Ledger = InMemoryExecutionLedger | SQLiteExecutionStore
+Ledger = ExecutionLedger
 
 
 class WorkerError(RuntimeError):
