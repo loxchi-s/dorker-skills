@@ -992,7 +992,7 @@ Add a path-with-spaces regression test.
         git_output.return_value = (
             "diff --git a/sample.py b/sample.py\n"
             "@@ -0,0 +1,1 @@\n"
-            "+" + ("x" * 200_000) + "\n"
+            "+" + ("x" * (MAX_TOTAL_CONTEXT_BYTES + 100_000)) + "\n"
         )
         prompt = "Review this patch."
         result = collect_context("main", prompt)
@@ -1032,7 +1032,7 @@ Add a path-with-spaces regression test.
         git_output.return_value = (
             "diff --git a/sample.py b/sample.py\n"
             "@@ -0,0 +1,1 @@\n"
-            "+" + ("x" * 200_000) + "\n"
+            "+" + ("x" * (MAX_TOTAL_CONTEXT_BYTES + 100_000)) + "\n"
         )
         response = Mock()
         response.read.return_value = json.dumps({
