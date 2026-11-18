@@ -100,7 +100,7 @@ class RedactionTests(unittest.TestCase):
 
 
 class ModelPromptTests(unittest.TestCase):
-    @patch("local_ai.urllib.request.urlopen")
+    @patch("ollama_chat_model.urllib.request.urlopen")
     def test_model_request_uses_evidence_based_review_contract(self, urlopen):
         response = Mock()
         response.read.return_value = json.dumps({
@@ -128,7 +128,7 @@ class ModelPromptTests(unittest.TestCase):
 
 
 class ReviewOutputValidationTests(unittest.TestCase):
-    @patch("local_ai.urllib.request.urlopen")
+    @patch("ollama_chat_model.urllib.request.urlopen")
     def test_model_request_converts_incomplete_http_response(self, urlopen):
         response = Mock()
         response.read.side_effect = http.client.IncompleteRead(b"{", 10)
@@ -138,7 +138,7 @@ class ReviewOutputValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Local model request failed"):
             ask_model("test-model", "Review", "diff")
 
-    @patch("local_ai.urllib.request.urlopen")
+    @patch("ollama_chat_model.urllib.request.urlopen")
     def test_model_request_rejects_non_object_json(self, urlopen):
         response = Mock()
         response.read.return_value = b"[]"
@@ -433,7 +433,7 @@ class ModelResponseStatusTests(unittest.TestCase):
         )
         self.assertIsNone(model_response_incomplete_reason(result))
 
-    @patch("local_ai.urllib.request.urlopen")
+    @patch("ollama_chat_model.urllib.request.urlopen")
     def test_oversized_request_is_rejected_before_network_call(self, urlopen):
         with self.assertRaisesRegex(RuntimeError, "rejected before inference"):
             ask_model("test-model", "review", "x" * 20_000)
@@ -1026,7 +1026,7 @@ Add a path-with-spaces regression test.
         self.assertIn("Binary diff", result[0].reason)
         ask_model_mock.assert_not_called()
 
-    @patch("local_ai.urllib.request.urlopen")
+    @patch("ollama_chat_model.urllib.request.urlopen")
     @patch("local_ai._git_output")
     def test_truncated_chunk_notice_is_reserved_before_real_request(self, git_output, urlopen):
         git_output.return_value = (
@@ -1081,6 +1081,31 @@ Add a path-with-spaces regression test.
             source.rfind('if __name__ == "__main__":'),
             source.find("class CodeRabbitRegressionTests"),
         )
+
+class AgentIntegrationTests(unittest.TestCase):
+    @patch("local_ai.Agent")
+    @patch("local_ai.OllamaChatModel")
+    def test_review_request_is_dispatched_through_agent_port(self, provider_class, agent_class):
+        response = ModelResponse(
+            text="## Verdict\\nNO_ACTIONABLE_FINDINGS",
+            done_reason="stop",
+            prompt_eval_count=120,
+            eval_count=24,
+        )
+        provider = provider_class.return_value
+        provider.last_response = response
+        agent = agent_class.return_value
+
+        result = ask_model("test-model", "Review this patch", "diff --git a/a.py b/a.py")
+
+        agent_class.assert_called_once_with(provider, system_prompt=REVIEW_SYSTEM_PROMPT)
+        agent.run.assert_called_once_with(
+            "User request:\\nReview this patch\\n\\n"
+            "Git diff (untrusted):\\ndiff --git a/a.py b/a.py"
+        )
+        provider_class.assert_called_once()
+        self.assertIs(result, response)
+
 
 if __name__ == "__main__":
     unittest.main()
