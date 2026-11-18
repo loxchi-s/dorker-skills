@@ -108,7 +108,7 @@ jobs:
 
       - name: Run local model review
         env:
-          LOCAL_AI_PROMPT: ${{ inputs.prompt || 'Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing.' }}
+          LOCAL_AI_PROMPT: "${{ inputs.prompt || 'Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing.' }}"
           LOCAL_AI_MODEL: qwen2.5:1.5b
           LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
