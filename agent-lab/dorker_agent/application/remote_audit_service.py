@@ -238,9 +238,9 @@ class RemoteAuditApplicationService:
         except AuditServiceError as exc:
             return self.error_response(exc.status, exc.code, str(exc), request_id, exc.retryable)
         except IdentityVerificationError:
-            return self._error(401, "unauthenticated", "OIDC identity could not be verified", request_id)
+            return self.error_response(401, "unauthenticated", "OIDC identity could not be verified", request_id)
         except (ValueError, TypeError, RecursionError):
-            return self._error(400, "invalid_request", "request fields are invalid", request_id)
+            return self.error_response(400, "invalid_request", "request fields are invalid", request_id)
 
     def _authenticate(self, headers: dict[str, str]) -> VerifiedGitHubActor:
         authorization = headers.get("authorization", "")
