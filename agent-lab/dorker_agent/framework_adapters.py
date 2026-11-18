@@ -4,10 +4,9 @@ from __future__ import annotations
 from typing import Mapping, Protocol
 
 from .capabilities import CapabilityPolicy, DEFAULT_POLICY
-from .execution import (
-    ExecutionCancelledError, ExecutionControl, ExecutionDeadlineExceeded,
-    InMemoryExecutionLedger, SQLiteExecutionStore,
-)
+from .application.errors import ExecutionCancelledError, ExecutionDeadlineExceeded
+from .application.execution_control import ExecutionControl
+from .ports.execution_ledger import ExecutionLedger
 from .tasks import TaskRequest
 
 
@@ -41,7 +40,7 @@ def _response_text(result: object, *, attribute: str | None = None) -> str:
 def _invoke_with_ledger(
     invoke,
     *,
-    ledger: InMemoryExecutionLedger | SQLiteExecutionStore | None,
+    ledger: ExecutionLedger | None,
     execution_id: str | None,
     control: ExecutionControl | None,
 ) -> str:
