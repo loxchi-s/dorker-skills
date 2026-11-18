@@ -31,7 +31,6 @@ from .ports.identity import GitHubIdentityVerifier as IdentityVerifier
 from .github_oidc import OIDCVerificationError
 
 _MAX_BODY_BYTES = 64 * 1024
-_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
