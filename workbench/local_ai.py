@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import re
@@ -12,8 +11,6 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from dorker_agent import Agent
