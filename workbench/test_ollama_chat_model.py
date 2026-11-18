@@ -37,7 +37,7 @@ class OllamaChatModelTests(unittest.TestCase):
         payload = json.loads(request.data)
         self.assertEqual("review complete", result)
         self.assertEqual("Act as a reviewer.", payload["system"])
-        self.assertEqual("Review this patch.\\n\\nDiff content.", payload["prompt"])
+        self.assertEqual("Review this patch.\n\nDiff content.", payload["prompt"])
         self.assertEqual("stop", provider.last_response.done_reason)
         self.assertEqual(321, provider.last_response.prompt_eval_count)
         self.assertEqual(45, provider.last_response.eval_count)
