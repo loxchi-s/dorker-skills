@@ -1,24 +1,15 @@
-"""Test reference repositories for Remote Audit Service Contract v1.
-
-SQLite durability is single-host only; neither adapter is a production deployment.
-"""
+"""WSGI-compatible reference service for the Remote Audit Service Contract v1."""
 from __future__ import annotations
 
 import base64
 from collections import OrderedDict
-import copy
 import hashlib
 import json
-import os
 import re
-import sqlite3
-import stat
 import threading
 import time
 import uuid
 from math import ceil
-from pathlib import Path
-from datetime import datetime, timezone
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -27,7 +18,7 @@ from .adapters.persistence.in_memory_audit_repository import InMemoryAuditReposi
 from .adapters.persistence.sqlite_audit_repository import SQLiteAuditRepository
 from .application.errors import AuditServiceError
 from .domain.audit import AuthorizationResult, VerifiedApprovalEvidence
-from .domain.audit_hashing import ZERO_HASH as _ZERO_HASH, canonical_hash as _domain_canonical_hash, event_hash as _event_hash
+from .domain.audit_hashing import canonical_hash as _domain_canonical_hash
 from .ports.audit import (
     ApprovalEvidenceVerifier,
     AuditRepository,
@@ -37,7 +28,6 @@ from .ports.identity import GitHubIdentityVerifier as IdentityVerifier
 from .github_oidc import OIDCVerificationError
 
 _MAX_BODY_BYTES = 64 * 1024
-_MAX_EVENTS = 10_000
 _KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
