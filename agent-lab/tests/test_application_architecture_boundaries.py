@@ -40,6 +40,30 @@ if loaded:
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_sqlite_artifact_index_depends_on_blob_store_port(self):
+        agent_lab_root = Path(__file__).resolve().parents[1]
+        script = """
+import sys
+from dorker_agent.adapters.persistence.sqlite_artifact_index import SQLiteArtifactIndex
+from dorker_agent.ports.artifact_blob_store import ArtifactBlobStore
+
+assert SQLiteArtifactIndex is not None
+assert ArtifactBlobStore is not None
+assert "dorker_agent.adapters.storage.content_addressed_artifact_store" not in sys.modules
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(agent_lab_root)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=agent_lab_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_runtime_adapters_depend_on_execution_port_not_compatibility_facade(self):
         agent_lab_root = Path(__file__).resolve().parents[1]
         script = """
