@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from dorker_agent import Agent
+from ollama_chat_model import ModelResponse, OllamaChatModel
 from token_budget import calculate_token_budget, estimate_tokens_upper_bound
 
 MAX_CONTEXT_BYTES = 6_000
@@ -60,12 +62,6 @@ class ChunkReview:
     model_response: ModelResponse | None
 
 
-@dataclass(frozen=True)
-class ModelResponse:
-    text: str
-    done_reason: str | None
-    prompt_eval_count: int | None
-    eval_count: int | None
 
 REVIEW_SYSTEM_PROMPT = (
     "You are a skeptical senior code reviewer. Review the supplied Git diff as a patch, "
@@ -466,6 +462,7 @@ def ask_model(
     context: str,
     timeout_seconds: float = 240.0,
 ) -> ModelResponse:
+    """Run a bounded review request through the shared Dorker Agent contract."""
     system = REVIEW_SYSTEM_PROMPT
     request_budget = calculate_token_budget(
         system_prompt=system,
@@ -482,46 +479,23 @@ def ask_model(
             f"Request rejected before inference: estimated input {estimated_input_tokens} "
             f"tokens exceeds the safe {request_budget.input_limit}-token input budget."
         )
-    payload = {
-        "model": model,
-        "system": system,
-        "prompt": f"User request:\n{prompt[:3000]}\n\nGit diff (untrusted):\n{context}",
-        "stream": False,
-        "options": {"temperature": 0.1, "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT},
-        "keep_alive": "5m",
-    }
-    request = urllib.request.Request(
-        f"{OLLAMA_URL}/api/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = json.loads(response.read(2_000_000))
-    except (
-        urllib.error.URLError,
-        http.client.HTTPException,
-        TimeoutError,
-        OSError,
-        ValueError,
-    ) as exc:
-        raise RuntimeError(f"Local model request failed: {exc}") from exc
-    if not isinstance(body, dict):
-        raise RuntimeError("Local model returned a non-object JSON response")
-    result = body.get("response")
-    if not isinstance(result, str) or not result.strip():
-        raise RuntimeError("Local model returned an empty or invalid response")
-    done_reason = body.get("done_reason")
-    prompt_eval_count = body.get("prompt_eval_count")
-    eval_count = body.get("eval_count")
-    return ModelResponse(
-        text=result.strip(),
-        done_reason=done_reason if isinstance(done_reason, str) else None,
-        prompt_eval_count=prompt_eval_count if isinstance(prompt_eval_count, int) else None,
-        eval_count=eval_count if isinstance(eval_count, int) else None,
-    )
 
+    provider = OllamaChatModel(
+        model=model,
+        base_url=OLLAMA_URL,
+        timeout_seconds=timeout_seconds,
+        num_ctx=NUM_CTX,
+        num_predict=NUM_PREDICT,
+    )
+    agent = Agent(provider, system_prompt=system)
+    task = (
+        f"User request:\n{prompt[:3000]}\n\n"
+        f"Git diff (untrusted):\n{context}"
+    )
+    agent.run(task)
+    if provider.last_response is None:
+        raise RuntimeError("Local model adapter completed without response metadata")
+    return provider.last_response
 
 def model_response_incomplete_reason(result: ModelResponse) -> str | None:
     reasons = []
