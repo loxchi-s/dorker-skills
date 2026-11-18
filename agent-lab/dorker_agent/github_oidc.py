@@ -15,7 +15,8 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from .artifacts import GitHubActorClaim, VerifiedGitHubActor
+from .domain.identity import GitHubActorClaim, VerifiedGitHubActor
+from .ports.identity import IdentityVerificationError
 
 
 ISSUER = "https://token.actions.githubusercontent.com"
@@ -24,7 +25,7 @@ _MAX_JWKS_BYTES = 256 * 1024
 _MAX_TOKEN_BYTES = 16 * 1024
 
 
-class OIDCVerificationError(ValueError):
+class OIDCVerificationError(IdentityVerificationError):
     """OIDC token or GitHub identity did not satisfy the verifier policy."""
 
 
