@@ -168,7 +168,7 @@ class RemoteAuditService:
                 payload = _strict_object(body)
                 if set(payload) != {"idempotency_key", "plan"}:
                     raise AuditServiceError(400, "invalid_request", "plan request fields are invalid")
-                key = self._validate_key(payload["idempotency_key"])
+                key = _validate_key(payload["idempotency_key"])
                 token, plan = _validate_plan(payload["plan"])
                 operation = {
                     "api_version": "v1", "operation": "record_plan",
@@ -187,7 +187,7 @@ class RemoteAuditService:
                 payload = _strict_object(body)
                 if set(payload) != {"idempotency_key", "approval_token", "decision", "evidence"}:
                     raise AuditServiceError(400, "invalid_request", "decision request fields are invalid")
-                key = self._validate_key(payload["idempotency_key"])
+                key = _validate_key(payload["idempotency_key"])
                 token, decision = payload["approval_token"], payload["decision"]
                 if not isinstance(token, str) or not _DIGEST.fullmatch(token):
                     raise AuditServiceError(400, "invalid_request", "approval_token is invalid")
@@ -233,7 +233,7 @@ class RemoteAuditService:
                 return self._json(200, self._success(event, key, replayed, request_id))
             if method == "GET" and path.startswith("/v1/audit/idempotency/"):
                 self._authorize(actor, "lookup_idempotency")
-                key = self._validate_key(unquote(path.rsplit("/", 1)[-1]))
+                key = _validate_key(unquote(path.rsplit("/", 1)[-1]))
                 event = self._repository.lookup(self._repository_id, key)
                 if event is None:
                     raise AuditServiceError(404, "not_found", "idempotency key was not found")
@@ -249,13 +249,13 @@ class RemoteAuditService:
                 if not raw_limit.isdecimal() or not 1 <= int(raw_limit) <= 1000:
                     raise AuditServiceError(400, "invalid_request", "limit must be 1..1000")
                 cursor = query.get("cursor", [None])[0]
-                offset = self._decode_cursor(cursor)
+                offset = _decode_cursor(cursor)
                 page_limit = min(int(raw_limit), 10)
                 events = self._repository.list_events(self._repository_id, offset, page_limit + 1)
                 next_cursor = None
                 if len(events) > page_limit:
                     events = events[:page_limit]
-                    next_cursor = self._encode_cursor(offset + len(events))
+                    next_cursor = _encode_cursor(offset + len(events))
                 return self._json(200, {"events": events, "next_cursor": next_cursor})
             raise AuditServiceError(404, "not_found", "endpoint was not found")
         except AuditServiceError as exc:
