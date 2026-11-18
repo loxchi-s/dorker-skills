@@ -8,6 +8,9 @@ on:
         required: false
         type: string
         default: "Review this PR against the five Architecture Health Checks: Modularity (clear responsibilities, no genuine God modules or circular dependencies); Boundaries (Domain/Business Logic depends on Ports, not frameworks, databases, networks, or UI); Coupling (dependencies point inward, no God shared utilities); Cohesion (names and package placement match responsibility); Testability (business logic unit-tests without DB or network). Report only actionable findings with exact changed-file evidence; do not guess when evidence is missing."
+  push:
+    branches:
+      - refactor/architecture-health-phase1-artifact-contract
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_call:
@@ -112,7 +115,7 @@ jobs:
           LOCAL_AI_MODEL: qwen2.5:1.5b
           LOCAL_AI_REPORT: ${{ runner.temp }}/local-ai-report.md
           OLLAMA_URL: http://127.0.0.1:11434
-          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BASE_REF: "${{ github.base_ref || 'feat/github-local-ai-workbench' }}"
           GITHUB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           PYTHONPATH: ${{ env.DORKER_AGENT_LAB_DIR }}
         run: python "$WORKBENCH_DIR/local_ai.py"
