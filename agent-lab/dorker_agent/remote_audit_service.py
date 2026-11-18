@@ -23,7 +23,15 @@ from datetime import datetime, timezone
 from typing import Callable, Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .artifacts import GitHubActorClaim, VerifiedGitHubActor
+from .domain.identity import GitHubActorClaim, VerifiedGitHubActor
+from .domain.audit import AuditServiceError, AuthorizationResult, VerifiedApprovalEvidence
+from .domain.audit_hashing import ZERO_HASH as _ZERO_HASH, canonical_hash as _canonical_hash, event_hash as _event_hash
+from .ports.audit import (
+    ApprovalEvidenceVerifier,
+    AuditRepository,
+    AuthorizationPolicy,
+    IdentityVerifier,
+)
 from .github_oidc import OIDCVerificationError
 
 _MAX_BODY_BYTES = 64 * 1024
@@ -31,40 +39,6 @@ _MAX_EVENTS = 10_000
 _KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ZERO_HASH = "0" * 64
-
-
-class AuditServiceError(RuntimeError):
-    def __init__(self, status: int, code: str, message: str, *, retryable: bool = False):
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.retryable = retryable
-
-
-class IdentityVerifier(Protocol):
-    def verify(self, claim: GitHubActorClaim) -> VerifiedGitHubActor: ...
-
-
-@dataclass(frozen=True)
-class AuthorizationResult:
-    allowed: bool
-    decision_id: str
-    policy_version: str
-
-
-@dataclass(frozen=True)
-class VerifiedApprovalEvidence:
-    issuer: str
-    evidence_id: str
-    repository_id: int
-    plan_token: str
-    decision: str
-    reviewer_actor_id: int
-    evidence_digest: str
-
-
-class ApprovalEvidenceVerifier(Protocol):
-    def verify(self, *, envelope: dict[str, object], repository_id: int, plan_token: str, decision: str, actor: VerifiedGitHubActor) -> VerifiedApprovalEvidence: ...
 
 
 class DefaultDenyApprovalEvidenceVerifier:
@@ -126,22 +100,6 @@ def _strict_object(raw: bytes) -> dict[str, object]:
     if not isinstance(value, dict):
         raise AuditServiceError(400, "invalid_request", "request body must be an object")
     return value
-
-
-def _canonical_hash(value: dict[str, object]) -> str:
-    try:
-        encoded = json.dumps(
-            value, sort_keys=True, separators=(",", ":"),
-            ensure_ascii=True, allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise AuditServiceError(400, "invalid_request", "request is not canonical JSON") from exc
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _event_hash(event: dict[str, object]) -> str:
-    payload = {key: value for key, value in event.items() if key != "event_hash"}
-    return _canonical_hash(payload)
 
 
 def _claim_from_bearer(token: str) -> GitHubActorClaim:
